@@ -2,6 +2,7 @@ EXTRA_CFLAGS += -Werror -DCONFIG_MT76_LEDS
 
 obj-m := mt76.o
 obj-$(CONFIG_MT7603E) += mt7603/
+obj-$(CONFIG_MT7615E) += mt7615/
 obj-$(CONFIG_MT76x02_LIB) += mt76x02-lib.o
 obj-$(CONFIG_MT76x02_USB) += mt76x02-usb.o
 obj-$(CONFIG_MT76_USB) += mt76-usb.o
