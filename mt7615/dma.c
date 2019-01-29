@@ -61,6 +61,9 @@ void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 	type = FIELD_GET(MT_RXD0_PKT_TYPE, le32_to_cpu(rxd[0]));
 
 	switch (type) {
+	case PKT_TYPE_TXRX_NOTIFY:
+		mt7615_mac_tx_free(dev, skb);
+		return;
 	case PKT_TYPE_RX_EVENT:
 		mt7615_mcu_rx_event(dev, skb);
 		return;
@@ -109,7 +112,7 @@ int mt7615_dma_init(struct mt7615_dev *dev)
 {
 	int ret;
 
-	mt76_dma_attach(&dev->mt76);
+	mt76_ct_dma_attach(&dev->mt76);
 
 	tasklet_init(&dev->tx_tasklet, mt7615_tx_tasklet, (unsigned long)dev);
 

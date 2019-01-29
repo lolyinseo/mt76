@@ -272,6 +272,7 @@ struct mt76_rx_tid {
 #define MT_TX_CB_DMA_DONE		BIT(0)
 #define MT_TX_CB_TXS_DONE		BIT(1)
 #define MT_TX_CB_TXS_FAILED		BIT(2)
+#define MT_TX_CB_TX_FREE		BIT(3)
 
 #define MT_PACKET_ID_MASK		GENMASK(7, 0)
 #define MT_PACKET_ID_NO_ACK		0
@@ -313,6 +314,9 @@ struct mt76_driver_ops {
 			      enum mt76_txq_id qid, struct mt76_wcid *wcid,
 			      struct ieee80211_sta *sta,
 			      struct mt76_tx_info *tx_info);
+
+	int (*tx_prepare_txp)(struct mt76_dev *dev, void *txwi_ptr,
+			      struct sk_buff *skb, struct mt76_queue_buf *buf);
 
 	void (*tx_complete_skb)(struct mt76_dev *dev, enum mt76_txq_id qid,
 				struct mt76_queue_entry *e);
