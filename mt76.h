@@ -31,6 +31,8 @@
 #define MT_MCU_RING_SIZE    32
 #define MT_RX_BUF_SIZE      2048
 
+#define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
+
 struct mt76_dev;
 struct mt76_wcid;
 
