@@ -169,6 +169,17 @@ static const struct ieee80211_iface_combination if_comb[] = {
 	}
 };
 
+static int mt7615_init_debugfs(struct mt7615_dev *dev)
+{
+	struct dentry *dir;
+
+	dir = mt76_register_debugfs(&dev->mt76);
+	if (!dir)
+		return -ENOMEM;
+
+	return 0;
+}
+
 int mt7615_register_device(struct mt7615_dev *dev)
 {
 	struct ieee80211_hw *hw = mt76_hw(dev);
@@ -212,7 +223,7 @@ int mt7615_register_device(struct mt7615_dev *dev)
 
 	hw->max_tx_fragments = MT_TXP_MAX_BUF_NUM;
 
-	return 0;
+	return mt7615_init_debugfs(dev);
 }
 
 void mt7615_unregister_device(struct mt7615_dev *dev)
