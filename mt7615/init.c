@@ -207,6 +207,7 @@ void mt7615_unregister_device(struct mt7615_dev *dev)
 
 	spin_lock_bh(&dev->token_lock);
 	idr_for_each_entry(&dev->token, txwi, id) {
+		mt7615_txp_skb_unmap(&dev->mt76, txwi);
 		if (txwi->skb)
 			dev_kfree_skb_any(txwi->skb);
 		mt76_put_txwi(&dev->mt76, txwi);

@@ -419,6 +419,20 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 	return 0;
 }
 
+void mt7615_txp_skb_unmap(struct mt76_dev *dev,
+			  struct mt76_txwi_cache *t)
+{
+	struct mt7615_txp *txp;
+	u8 *txwi;
+	int i;
+
+	txwi = mt76_get_txwi_ptr(dev, t);
+	txp = (struct mt7615_txp *)(txwi + MT_TXD_SIZE);
+	for (i = 1; i < txp->nbuf; i++)
+		dma_unmap_single(dev->dev, le32_to_cpu(txp->buf[i]),
+				 le32_to_cpu(txp->len[i]), DMA_TO_DEVICE);
+}
+
 int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 			  enum mt76_txq_id qid, struct mt76_wcid *wcid,
 			  struct ieee80211_sta *sta,
@@ -698,6 +712,7 @@ void mt7615_mac_tx_free(struct mt7615_dev *dev, struct sk_buff *skb)
 		if (!txwi)
 			continue;
 
+		mt7615_txp_skb_unmap(mdev, txwi);
 		if (txwi->skb) {
 			mt76_tx_complete_skb(mdev, txwi->skb);
 			txwi->skb = NULL;
