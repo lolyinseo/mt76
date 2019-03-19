@@ -419,49 +419,6 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 	return 0;
 }
 
-static int mt7615_token_enqueue(struct mt7615_dev *dev, struct sk_buff *skb)
-{
-	struct mt7615_token_queue *q = &dev->tkq;
-	int token = -ENOSPC;
-
-	spin_lock_bh(&q->lock);
-
-	if (q->queued == q->ntoken || q->skb[q->index])
-		goto out;
-
-	q->skb[q->index] = skb;
-	token = q->index;
-
-	q->index = (q->index + 1) % q->ntoken;
-	q->queued++;
-
-out:
-	spin_unlock_bh(&q->lock);
-
-	return token;
-}
-
-struct sk_buff *
-mt7615_token_dequeue(struct mt7615_dev *dev, u16 token)
-{
-	struct mt7615_token_queue *q = &dev->tkq;
-	struct sk_buff *skb = NULL;
-
-	spin_lock_bh(&q->lock);
-
-	if (!q->queued || !q->skb[token])
-		goto out;
-
-	skb = q->skb[token];
-	q->skb[token] = NULL;
-	q->queued--;
-
-out:
-	spin_unlock_bh(&q->lock);
-
-	return skb;
-}
-
 int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 			  enum mt76_txq_id qid, struct mt76_wcid *wcid,
 			  struct ieee80211_sta *sta,
@@ -473,7 +430,7 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(tx_info->skb);
 	struct ieee80211_key_conf *key = info->control.hw_key;
 	struct ieee80211_vif *vif = info->control.vif;
-	int i, pid, ret, nbuf = tx_info->nbuf - 1;
+	int i, pid, id, nbuf = tx_info->nbuf - 1;
 	struct mt7615_txp *txp;
 
 	if (!wcid)
@@ -517,11 +474,14 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 		txp->bss_idx = mvif->idx;
 	}
 
-	ret = mt7615_token_enqueue(dev, tx_info->skb);
-	if (ret < 0)
-		return ret;
+	spin_lock_bh(&dev->token_lock);
+	id = idr_alloc(&dev->token, tx_info->skb, 0,
+		       MT7615_TOKEN_SIZE, GFP_ATOMIC);
+	spin_unlock_bh(&dev->token_lock);
+	if (id < 0)
+		return id;
 
-	txp->token = cpu_to_le16(ret);
+	txp->token = cpu_to_le16(id);
 	txp->rept_wds_wcid = 0xff;
 
 	return 0;
@@ -720,17 +680,17 @@ out:
 
 void mt7615_mac_tx_free(struct mt7615_dev *dev, struct sk_buff *skb)
 {
+	struct mt7615_tx_free *free = (struct mt7615_tx_free *)skb->data;
 	struct mt76_dev *mdev = &dev->mt76;
-	struct mt7615_tx_free *free;
-	u8 i, cnt;
+	u8 i, count;
 
-	free = (struct mt7615_tx_free *)skb->data;
-	cnt = FIELD_GET(MT_TX_FREE_MSDU_ID_CNT, le16_to_cpu(free->ctrl));
-
-	for (i = 0; i < cnt; i++) {
+	count = FIELD_GET(MT_TX_FREE_MSDU_ID_CNT, le16_to_cpu(free->ctrl));
+	for (i = 0; i < count; i++) {
 		struct sk_buff *skb;
 
-		skb = mt7615_token_dequeue(dev, le16_to_cpu(free->token[i]));
+		spin_lock_bh(&dev->token_lock);
+		skb = idr_remove(&dev->token, le16_to_cpu(free->token[i]));
+		spin_unlock_bh(&dev->token_lock);
 		if (!skb)
 			continue;
 

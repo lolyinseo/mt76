@@ -9,33 +9,6 @@
 #include "mt7615.h"
 #include "mac.h"
 
-static int mt7615_alloc_token(struct mt7615_dev *dev)
-{
-	struct mt7615_token_queue *q = &dev->tkq;
-
-	spin_lock_init(&q->lock);
-	q->ntoken = MT7615_TOKEN_SIZE + 1;
-
-	q->skb = devm_kcalloc(dev->mt76.dev, q->ntoken,
-			      sizeof(*q->skb), GFP_KERNEL);
-
-	return q->skb ? 0 : -ENOMEM;
-}
-
-static void mt7615_token_cleanup(struct mt7615_dev *dev)
-{
-	int i;
-
-	for (i = 0; i <= MT7615_TOKEN_SIZE; i++) {
-		struct sk_buff *skb;
-		skb = mt7615_token_dequeue(dev, i);
-		if (!skb)
-			continue;
-
-		dev_kfree_skb_any(skb);
-	}
-}
-
 static void mt7615_phy_init(struct mt7615_dev *dev)
 {
 	/* disable band 0 rf low power beacon mode */
@@ -95,9 +68,8 @@ static int mt7615_init_hardware(struct mt7615_dev *dev)
 
 	mt76_wr(dev, MT_INT_SOURCE_CSR, ~0);
 
-	ret = mt7615_alloc_token(dev);
-	if (ret < 0)
-		return ret;
+	spin_lock_init(&dev->token_lock);
+	idr_init(&dev->token);
 
 	ret = mt7615_eeprom_init(dev);
 	if (ret < 0)
@@ -230,9 +202,18 @@ int mt7615_register_device(struct mt7615_dev *dev)
 
 void mt7615_unregister_device(struct mt7615_dev *dev)
 {
+	struct sk_buff *skb;
+	int id;
+
 	mt76_unregister_device(&dev->mt76);
 	mt7615_mcu_exit(dev);
 	mt7615_dma_cleanup(dev);
-	mt7615_token_cleanup(dev);
+
+	spin_lock_bh(&dev->token_lock);
+	idr_for_each_entry(&dev->token, skb, id)
+		dev_kfree_skb_any(skb);
+	spin_unlock_bh(&dev->token_lock);
+	idr_destroy(&dev->token);
+
 	ieee80211_free_hw(mt76_hw(dev));
 }

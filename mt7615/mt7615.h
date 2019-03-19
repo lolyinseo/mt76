@@ -30,7 +30,7 @@
 #define MT7615_ROM_PATCH		"mt7615_rom_patch.bin"
 
 #define MT7615_EEPROM_SIZE		1024
-#define MT7615_TOKEN_SIZE		4095
+#define MT7615_TOKEN_SIZE		4096
 
 struct mt7615_vif;
 struct mt7615_sta;
@@ -63,21 +63,13 @@ struct mt7615_vif {
 	struct mt7615_sta sta;
 };
 
-struct mt7615_token_queue {
-	struct sk_buff **skb;
-	spinlock_t lock;
-
-	int ntoken;
-	int queued;
-	u16 index;
-};
-
 struct mt7615_dev {
 	struct mt76_dev mt76; /* must be first */
 	u32 vif_mask;
 	u32 omac_mask;
 
-	struct mt7615_token_queue tkq;
+	spinlock_t token_lock;
+	struct idr token;
 };
 
 enum {
@@ -200,7 +192,6 @@ void mt7615_sta_assoc(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 		      struct ieee80211_sta *sta);
 void mt7615_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 		       struct ieee80211_sta *sta);
-struct sk_buff *mt7615_token_dequeue(struct mt7615_dev *dev, u16 token);
 void mt7615_mac_work(struct work_struct *work);
 
 #endif
