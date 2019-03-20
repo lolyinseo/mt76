@@ -112,10 +112,16 @@ void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 static void mt7615_tx_tasklet(unsigned long data)
 {
 	struct mt7615_dev *dev = (struct mt7615_dev *)data;
+	static const u8 queue_map[] = {
+		MT_TXQ_MCU,
+		MT_TXQ_BE
+	};
 	int i;
 
-	for (i = MT_TXQ_MCU; i >= 0; i--)
-		mt76_queue_tx_cleanup(dev, i, false);
+	for (i = 0; i < ARRAY_SIZE(queue_map); i++)
+		mt76_queue_tx_cleanup(dev, queue_map[i], false);
+
+	mt76_txq_schedule_all(&dev->mt76);
 
 	mt7615_irq_enable(dev, MT_INT_TX_DONE_ALL);
 }
