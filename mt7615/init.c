@@ -202,18 +202,20 @@ int mt7615_register_device(struct mt7615_dev *dev)
 
 void mt7615_unregister_device(struct mt7615_dev *dev)
 {
-	struct sk_buff *skb;
+	struct mt76_txwi_cache *txwi;
 	int id;
 
+	spin_lock_bh(&dev->token_lock);
+	idr_for_each_entry(&dev->token, txwi, id) {
+		if (txwi->skb)
+			dev_kfree_skb_any(txwi->skb);
+		mt76_put_txwi(&dev->mt76, txwi);
+	}
+	spin_unlock_bh(&dev->token_lock);
+	idr_destroy(&dev->token);
 	mt76_unregister_device(&dev->mt76);
 	mt7615_mcu_exit(dev);
 	mt7615_dma_cleanup(dev);
-
-	spin_lock_bh(&dev->token_lock);
-	idr_for_each_entry(&dev->token, skb, id)
-		dev_kfree_skb_any(skb);
-	spin_unlock_bh(&dev->token_lock);
-	idr_destroy(&dev->token);
 
 	ieee80211_free_hw(mt76_hw(dev));
 }

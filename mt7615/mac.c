@@ -431,6 +431,8 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 	struct ieee80211_key_conf *key = info->control.hw_key;
 	struct ieee80211_vif *vif = info->control.vif;
 	int i, pid, id, nbuf = tx_info->nbuf - 1;
+	u8 *txwi = (u8 *)txwi_ptr;
+	struct mt76_txwi_cache *t;
 	struct mt7615_txp *txp;
 
 	if (!wcid)
@@ -449,7 +451,7 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 	mt7615_mac_write_txwi(dev, txwi_ptr, tx_info->skb, wcid, sta,
 			      pid, key);
 
-	txp = (struct mt7615_txp *)((u8 *)txwi_ptr + MT_TXD_SIZE);
+	txp = (struct mt7615_txp *)(txwi + MT_TXD_SIZE);
 	for (i = 0; i < nbuf; i++) {
 		txp->buf[i] = cpu_to_le32(tx_info->buf[i + 1].addr);
 		txp->len[i] = cpu_to_le32(tx_info->buf[i + 1].len);
@@ -474,9 +476,11 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 		txp->bss_idx = mvif->idx;
 	}
 
+	t = (struct mt76_txwi_cache *)(txwi + mdev->drv->txwi_size);
+	t->skb = tx_info->skb;
+
 	spin_lock_bh(&dev->token_lock);
-	id = idr_alloc(&dev->token, tx_info->skb, 0,
-		       MT7615_TOKEN_SIZE, GFP_ATOMIC);
+	id = idr_alloc(&dev->token, t, 0, MT7615_TOKEN_SIZE, GFP_ATOMIC);
 	spin_unlock_bh(&dev->token_lock);
 	if (id < 0)
 		return id;
@@ -682,19 +686,24 @@ void mt7615_mac_tx_free(struct mt7615_dev *dev, struct sk_buff *skb)
 {
 	struct mt7615_tx_free *free = (struct mt7615_tx_free *)skb->data;
 	struct mt76_dev *mdev = &dev->mt76;
+	struct mt76_txwi_cache *txwi;
 	u8 i, count;
 
 	count = FIELD_GET(MT_TX_FREE_MSDU_ID_CNT, le16_to_cpu(free->ctrl));
 	for (i = 0; i < count; i++) {
-		struct sk_buff *skb;
-
 		spin_lock_bh(&dev->token_lock);
-		skb = idr_remove(&dev->token, le16_to_cpu(free->token[i]));
+		txwi = idr_remove(&dev->token, le16_to_cpu(free->token[i]));
 		spin_unlock_bh(&dev->token_lock);
-		if (!skb)
+
+		if (!txwi)
 			continue;
 
-		mt76_tx_complete_skb(mdev, skb);
+		if (txwi->skb) {
+			mt76_tx_complete_skb(mdev, txwi->skb);
+			txwi->skb = NULL;
+		}
+
+		mt76_put_txwi(mdev, txwi);
 	}
 	dev_kfree_skb(skb);
 }
