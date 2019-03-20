@@ -1742,9 +1742,9 @@ void mt7615_mcu_set_rates(struct mt7615_dev *dev, struct mt7615_sta *sta,
 
 	mt76_wr(dev, addr + 27 * 4, w27);
 
-	if (!sta->wcid.tx_rate_set)
+	if (!(sta->wcid.tx_info & MT_WCID_TX_INFO_SET))
 		mt76_poll(dev, MT_WTBL_UPDATE, MT_WTBL_UPDATE_BUSY, 0, 5000);
 
 	sta->rate_count = 2 * MT7615_RATE_RETRY * n_rates;
-	sta->wcid.tx_rate_set = true;
+	sta->wcid.tx_info |= MT_WCID_TX_INFO_SET;
 }
