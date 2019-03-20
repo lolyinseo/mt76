@@ -126,7 +126,8 @@ int mt7615_dma_init(struct mt7615_dev *dev)
 
 	mt76_dma_attach(&dev->mt76);
 
-	tasklet_init(&dev->tx_tasklet, mt7615_tx_tasklet, (unsigned long)dev);
+	tasklet_init(&dev->mt76.tx_tasklet, mt7615_tx_tasklet,
+		     (unsigned long)dev);
 
 	mt76_wr(dev, MT_WPDMA_GLO_CFG,
 		MT_WPDMA_GLO_CFG_TX_WRITEBACK_DONE |
@@ -193,7 +194,7 @@ void mt7615_dma_cleanup(struct mt7615_dev *dev)
 		   MT_WPDMA_GLO_CFG_RX_DMA_EN);
 	mt76_set(dev, MT_WPDMA_GLO_CFG, MT_WPDMA_GLO_CFG_SW_RESET);
 
-	tasklet_kill(&dev->tx_tasklet);
+	tasklet_kill(&dev->mt76.tx_tasklet);
 	mt76_dma_cleanup(&dev->mt76);
 }
 

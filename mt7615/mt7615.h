@@ -77,7 +77,6 @@ struct mt7615_dev {
 	u32 vif_mask;
 	u32 omac_mask;
 
-	struct tasklet_struct tx_tasklet;
 	struct mt7615_token_queue tkq;
 };
 
