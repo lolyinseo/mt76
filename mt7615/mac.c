@@ -8,6 +8,7 @@
 #include <linux/etherdevice.h>
 #include <linux/timekeeping.h>
 #include "mt7615.h"
+#include "../dma.h"
 #include "mac.h"
 
 static struct mt76_wcid *mt7615_rx_get_wcid(struct mt7615_dev *dev,
@@ -244,8 +245,30 @@ void mt7615_sta_ps(struct mt76_dev *mdev, struct ieee80211_sta *sta, bool ps)
 void mt7615_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,
 			    struct mt76_queue_entry *e)
 {
-	if (!e->txwi)
+	if (!e->txwi) {
 		dev_kfree_skb_any(e->skb);
+		return;
+	}
+
+	/* error path */
+	if (e->skb == DMA_DUMMY_DATA) {
+		struct mt76_txwi_cache *t;
+		struct mt7615_dev *dev;
+		struct mt7615_txp *txp;
+		u8 *txwi_ptr;
+
+		txwi_ptr = mt76_get_txwi_ptr(mdev, e->txwi);
+		txp = (struct mt7615_txp *)(txwi_ptr + MT_TXD_SIZE);
+		dev = container_of(mdev, struct mt7615_dev, mt76);
+
+		spin_lock_bh(&dev->token_lock);
+		t = idr_remove(&dev->token, le16_to_cpu(txp->token));
+		spin_unlock_bh(&dev->token_lock);
+		e->skb = t ? t->skb : NULL;
+	}
+
+	if (e->skb)
+		mt76_tx_complete_skb(mdev, e->skb);
 }
 
 u16 mt7615_mac_tx_rate_val(struct mt7615_dev *dev,
@@ -501,6 +524,7 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 
 	txp->token = cpu_to_le16(id);
 	txp->rept_wds_wcid = 0xff;
+	tx_info->skb = DMA_DUMMY_DATA;
 
 	return 0;
 }
