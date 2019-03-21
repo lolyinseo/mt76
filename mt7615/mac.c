@@ -241,6 +241,13 @@ void mt7615_sta_ps(struct mt76_dev *mdev, struct ieee80211_sta *sta, bool ps)
 {
 }
 
+void mt7615_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,
+			    struct mt76_queue_entry *e)
+{
+	if (!e->txwi)
+		dev_kfree_skb_any(e->skb);
+}
+
 u16 mt7615_mac_tx_rate_val(struct mt7615_dev *dev,
 			   const struct ieee80211_tx_rate *rate,
 			   bool stbc, u8 *bw)
