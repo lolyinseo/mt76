@@ -24,7 +24,7 @@ mt7615_init_tx_queues(struct mt7615_dev *dev, int n_desc)
 	if (err < 0)
 		return err;
 
-	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
+	for (i = 0; i < MT_TXQ_MCU; i++) {
 		q = &dev->mt76.q_tx[i];
 		INIT_LIST_HEAD(&q->swq);
 		q->q = hwq;
