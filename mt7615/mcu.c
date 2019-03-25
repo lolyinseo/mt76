@@ -1512,8 +1512,8 @@ int mt7615_mcu_set_tx_ba(struct mt7615_dev *dev,
 	sta_rec_ba.ssn = cpu_to_le16(ssn);
 	sta_rec_ba.winsize = cpu_to_le16(ba_size);
 
-	return 	__mt7615_mcu_set_sta_rec(dev, mvif->idx, msta->wcid.idx,
-					 mvif->omac_idx, &sta_rec_ba, buf_len);
+	return __mt7615_mcu_set_sta_rec(dev, mvif->idx, msta->wcid.idx,
+					mvif->omac_idx, &sta_rec_ba, buf_len);
 }
 
 int mt7615_mcu_set_rx_ba(struct mt7615_dev *dev,

@@ -142,6 +142,7 @@ enum tx_phy_bandwidth {
 	MT_PHY_BW_80,
 	MT_PHY_BW_160,
 };
+
 #define MT_CT_INFO_APPLY_TXD		BIT(0)
 #define MT_CT_INFO_COPY_HOST_TXD_ALL	BIT(1)
 #define MT_CT_INFO_MGMT_FRAME		BIT(2)

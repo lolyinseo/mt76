@@ -30,8 +30,6 @@ mt7615_init_tx_queues(struct mt7615_dev *dev, int n_desc)
 		q->q = hwq;
 	}
 
-	mt7615_irq_enable(dev, MT_INT_TX_DONE(0));
-
 	return 0;
 }
 
@@ -53,26 +51,14 @@ mt7615_init_mcu_queue(struct mt7615_dev *dev, struct mt76_sw_queue *q,
 	INIT_LIST_HEAD(&q->swq);
 	q->q = hwq;
 
-	mt7615_irq_enable(dev, MT_INT_TX_DONE(idx));
-
 	return 0;
 }
-
 
 static int
 mt7615_init_rx_queue(struct mt7615_dev *dev, struct mt76_queue *q,
 		     int idx, int n_desc, int bufsize)
 {
-	int err;
-
-	err = mt76_queue_alloc(dev, q, idx, n_desc, bufsize,
-			       MT_RX_RING_BASE);
-	if (err < 0)
-		return err;
-
-	mt7615_irq_enable(dev, MT_INT_RX_DONE(idx));
-
-	return 0;
+	return mt76_queue_alloc(dev, q, idx, n_desc, bufsize, MT_RX_RING_BASE);
 }
 
 void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
@@ -220,5 +206,6 @@ void mt7615_dma_start(struct mt7615_dev *dev)
 		 (MT_WPDMA_GLO_CFG_TX_DMA_EN |
 		  MT_WPDMA_GLO_CFG_RX_DMA_EN));
 
+	/* enable interrupts for TX/RX rings */
 	mt7615_irq_enable(dev, MT_INT_RX_DONE_ALL | MT_INT_TX_DONE_ALL);
 }

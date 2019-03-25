@@ -306,6 +306,7 @@ enum mt7615_cipher_type {
 	MT_CIPHER_GCMP,
 	MT_CIPHER_GCMP_256,
 };
+
 struct wtbl_sec_key {
 	__le16 tag;
 	__le16 len;
@@ -355,12 +356,12 @@ struct wtbl_ba {
 struct wtbl_bf {
 	__le16 tag;
 	__le16 len;
-	u8 iBf;
-	u8 eBf;
-	u8 iBf_vht;
-	u8 eBf_vht;
+	u8 ibf;
+	u8 ebf;
+	u8 ibf_vht;
+	u8 ebf_vht;
 	u8 gid;
-	u8 PFMU_idx;
+	u8 pfmu_idx;
 	u8 rsv[2];
 } __packed;
 

@@ -117,8 +117,8 @@ int mt7615_mcu_set_wtbl_key(struct mt7615_dev *dev, int wcid,
 			    struct ieee80211_key_conf *key,
 			    enum set_key_cmd cmd);
 void mt7615_mcu_set_rates(struct mt7615_dev *dev, struct mt7615_sta *sta,
-			   struct ieee80211_tx_rate *probe_rate,
-			   struct ieee80211_tx_rate *rates);
+			  struct ieee80211_tx_rate *probe_rate,
+			  struct ieee80211_tx_rate *rates);
 int mt7615_mcu_add_wtbl_bmc(struct mt7615_dev *dev, struct ieee80211_vif *vif);
 int mt7615_mcu_del_wtbl_bmc(struct mt7615_dev *dev, struct ieee80211_vif *vif);
 int mt7615_mcu_add_wtbl(struct mt7615_dev *dev, struct ieee80211_vif *vif,
@@ -177,7 +177,7 @@ int mt7615_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 			  struct mt76_tx_info *tx_info);
 
 void mt7615_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,
-			     struct mt76_queue_entry *e);
+			    struct mt76_queue_entry *e);
 
 void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 			 struct sk_buff *skb);
