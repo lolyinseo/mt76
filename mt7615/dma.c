@@ -176,7 +176,23 @@ int mt7615_dma_init(struct mt7615_dev *dev)
 
 	mt76_wr(dev, MT_DELAY_INT_CFG, 0);
 
-	return mt76_init_queues(dev);
+	ret = mt76_init_queues(dev);
+	if (ret < 0)
+		return ret;
+
+	mt76_poll(dev, MT_WPDMA_GLO_CFG,
+		  MT_WPDMA_GLO_CFG_TX_DMA_BUSY |
+		  MT_WPDMA_GLO_CFG_RX_DMA_BUSY, 0, 1000);
+
+	/* start dma engine */
+	mt76_set(dev, MT_WPDMA_GLO_CFG,
+		 MT_WPDMA_GLO_CFG_TX_DMA_EN |
+		 MT_WPDMA_GLO_CFG_RX_DMA_EN);
+
+	/* enable interrupts for TX/RX rings */
+	mt7615_irq_enable(dev, MT_INT_RX_DONE_ALL | MT_INT_TX_DONE_ALL);
+
+	return 0;
 }
 
 void mt7615_dma_cleanup(struct mt7615_dev *dev)
@@ -188,24 +204,4 @@ void mt7615_dma_cleanup(struct mt7615_dev *dev)
 
 	tasklet_kill(&dev->mt76.tx_tasklet);
 	mt76_dma_cleanup(&dev->mt76);
-}
-
-static bool wait_for_wpdma(struct mt7615_dev *dev)
-{
-	return mt76_poll(dev, MT_WPDMA_GLO_CFG,
-			 MT_WPDMA_GLO_CFG_TX_DMA_BUSY |
-			 MT_WPDMA_GLO_CFG_RX_DMA_BUSY,
-			 0, 1000);
-}
-
-void mt7615_dma_start(struct mt7615_dev *dev)
-{
-	wait_for_wpdma(dev);
-
-	mt76_set(dev, MT_WPDMA_GLO_CFG,
-		 (MT_WPDMA_GLO_CFG_TX_DMA_EN |
-		  MT_WPDMA_GLO_CFG_RX_DMA_EN));
-
-	/* enable interrupts for TX/RX rings */
-	mt7615_irq_enable(dev, MT_INT_RX_DONE_ALL | MT_INT_TX_DONE_ALL);
 }
