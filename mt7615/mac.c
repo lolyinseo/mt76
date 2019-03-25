@@ -177,7 +177,7 @@ int mt7615_mac_fill_rx(struct mt7615_dev *dev, struct sk_buff *skb)
 		case MT_PHY_TYPE_HT_GF:
 		case MT_PHY_TYPE_HT:
 			status->encoding = RX_ENC_HT;
-			if (i > 15)
+			if (i > 31)
 				return -EINVAL;
 			break;
 		case MT_PHY_TYPE_VHT:
@@ -620,7 +620,7 @@ out:
 	case MT_PHY_TYPE_HT:
 		final_rate_flags |= IEEE80211_TX_RC_MCS;
 		final_rate &= MT_TX_RATE_IDX;
-		if (final_rate > 15)
+		if (final_rate > 31)
 			return false;
 		break;
 	case MT_PHY_TYPE_VHT:
