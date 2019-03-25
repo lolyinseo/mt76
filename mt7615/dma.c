@@ -79,10 +79,10 @@ void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 		break;
 	case PKT_TYPE_TXRX_NOTIFY:
 		mt7615_mac_tx_free(dev, skb);
-		return;
+		break;
 	case PKT_TYPE_RX_EVENT:
 		mt76_mcu_rx_event(&dev->mt76, skb);
-		return;
+		break;
 	case PKT_TYPE_NORMAL:
 		if (!mt7615_mac_fill_rx(dev, skb)) {
 			mt76_rx(&dev->mt76, q, skb);
