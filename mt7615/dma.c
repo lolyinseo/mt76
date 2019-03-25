@@ -2,7 +2,8 @@
 /* Copyright (C) 2019 MediaTek Inc.
  *
  * Author: Ryder Lee <ryder.lee@mediatek.com>
- *         Roy Luo <roychl666@gmail.com>
+ *	   Roy Luo <roychl666@gmail.com>
+ *	   Lorenzo Bianconi <lorenzo@kernel.org>
  */
 
 #include "mt7615.h"
@@ -52,13 +53,6 @@ mt7615_init_mcu_queue(struct mt7615_dev *dev, struct mt76_sw_queue *q,
 	q->q = hwq;
 
 	return 0;
-}
-
-static int
-mt7615_init_rx_queue(struct mt7615_dev *dev, struct mt76_queue *q,
-		     int idx, int n_desc, int bufsize)
-{
-	return mt76_queue_alloc(dev, q, idx, n_desc, bufsize, MT_RX_RING_BASE);
 }
 
 void mt7615_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
@@ -164,13 +158,16 @@ int mt7615_dma_init(struct mt7615_dev *dev)
 	if (ret)
 		return ret;
 
-	ret = mt7615_init_rx_queue(dev, &dev->mt76.q_rx[MT_RXQ_MCU], 1,
-				   MT7615_RX_MCU_RING_SIZE, MT_RX_BUF_SIZE);
+	/* init rx queues */
+	ret = mt76_queue_alloc(dev, &dev->mt76.q_rx[MT_RXQ_MCU], 1,
+			       MT7615_RX_MCU_RING_SIZE, MT_RX_BUF_SIZE,
+			       MT_RX_RING_BASE);
 	if (ret)
 		return ret;
 
-	ret = mt7615_init_rx_queue(dev, &dev->mt76.q_rx[MT_RXQ_MAIN], 0,
-				   MT7615_RX_RING_SIZE, MT_RX_BUF_SIZE);
+	ret = mt76_queue_alloc(dev, &dev->mt76.q_rx[MT_RXQ_MAIN], 0,
+			       MT7615_RX_RING_SIZE, MT_RX_BUF_SIZE,
+			       MT_RX_RING_BASE);
 	if (ret)
 		return ret;
 
