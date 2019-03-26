@@ -186,9 +186,8 @@ int mt7615_register_device(struct mt7615_dev *dev)
 	dev->mt76.chainmask = 0x404;
 	dev->mt76.antenna_mask = 0xf;
 
-	wiphy->interface_modes =
-		BIT(NL80211_IFTYPE_STATION) |
-		BIT(NL80211_IFTYPE_AP);
+	wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
+				 BIT(NL80211_IFTYPE_AP);
 
 	ret = mt76_register_device(&dev->mt76, true, mt7615_rates,
 				   ARRAY_SIZE(mt7615_rates));
