@@ -83,7 +83,6 @@ static int mt7615_init_hardware(struct mt7615_dev *dev)
 	ret = mt7615_mcu_init(dev);
 	if (ret)
 		return ret;
-	set_bit(MT76_STATE_MCU_RUNNING, &dev->mt76.state);
 
 	mt7615_mcu_set_eeprom(dev);
 	mt7615_mac_init(dev);

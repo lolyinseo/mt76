@@ -515,7 +515,13 @@ int mt7615_mcu_init(struct mt7615_dev *dev)
 	if (ret)
 		return ret;
 
-	return mt7615_load_firmware(dev);
+	ret = mt7615_load_firmware(dev);
+	if (ret)
+		return ret;
+
+	set_bit(MT76_STATE_MCU_RUNNING, &dev->mt76.state);
+
+	return 0;
 }
 
 void mt7615_mcu_exit(struct mt7615_dev *dev)
