@@ -336,6 +336,7 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 	int tx_count = 8;
 	u8 fc_type, fc_stype, p_fmt, q_idx, omac_idx = 0;
 	u16 fc = le16_to_cpu(hdr->frame_control);
+	u16 seqno = 0;
 	u32 val;
 
 	if (vif) {
@@ -428,7 +429,19 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 		tx_count = 0x1f;
 	}
 
-	txwi[3] = cpu_to_le32(FIELD_PREP(MT_TXD3_REM_TX_COUNT, tx_count));
+	val = FIELD_PREP(MT_TXD3_REM_TX_COUNT, tx_count);
+	if (ieee80211_is_data_qos(hdr->frame_control)) {
+		seqno = le16_to_cpu(hdr->seq_ctrl);
+		val |= MT_TXD3_SN_VALID;
+	} else if (ieee80211_is_back_req(hdr->frame_control)) {
+		struct ieee80211_bar *bar = (struct ieee80211_bar *)skb->data;
+
+		seqno = le16_to_cpu(bar->start_seq_num);
+		val |= MT_TXD3_SN_VALID;
+	}
+	val |= FIELD_PREP(MT_TXD3_SEQ, seqno >> 4);
+
+	txwi[3] = cpu_to_le32(val);
 
 	if (info->flags & IEEE80211_TX_CTL_NO_ACK)
 		txwi[3] |= cpu_to_le32(MT_TXD3_NO_ACK);
