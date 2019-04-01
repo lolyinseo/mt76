@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: ISC
 /* Copyright (C) 2019 MediaTek Inc.
  *
- * Author: Roy Luo <roychl666@gmail.com>
-	   Ryder Lee <ryder.lee@mediatek.com>
+ * Author: Roy Luo <royluo@google.com>
+ *         Ryder Lee <ryder.lee@mediatek.com>
  */
 
 #include <linux/firmware.h>
