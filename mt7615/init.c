@@ -55,6 +55,13 @@ static void mt7615_mac_init(struct mt7615_dev *dev)
 		FIELD_PREP(MT_AGG_ARxCR_LIMIT(6), MT7615_RATE_RETRY - 1) |
 		FIELD_PREP(MT_AGG_ARxCR_LIMIT(7), MT7615_RATE_RETRY - 1));
 
+	mt76_wr(dev, MT_AGG_ARCR,
+		(MT_AGG_ARCR_INIT_RATE1 |
+		 FIELD_PREP(MT_AGG_ARCR_RTS_RATE_THR, 2) |
+		 MT_AGG_ARCR_RATE_DOWN_RATIO_EN |
+		 FIELD_PREP(MT_AGG_ARCR_RATE_DOWN_RATIO, 1) |
+		 FIELD_PREP(MT_AGG_ARCR_RATE_UP_EXTRA_TH, 4)));
+
 	dev->mt76.global_wcid.idx = MT7615_WTBL_RESERVED;
 	dev->mt76.global_wcid.hw_key_idx = -1;
 	rcu_assign_pointer(dev->mt76.wcid[MT7615_WTBL_RESERVED],
