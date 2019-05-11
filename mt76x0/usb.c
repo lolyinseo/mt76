@@ -81,18 +81,18 @@ static void mt76x0u_cleanup(struct mt76x02_dev *dev)
 	mt76u_queues_deinit(&dev->mt76);
 }
 
-static void mt76x0u_mac_stop(struct mt76x02_dev *dev)
+static void mt76x0u_stop(struct ieee80211_hw *hw)
 {
+	struct mt76x02_dev *dev = hw->priv;
+
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 	cancel_delayed_work_sync(&dev->cal_work);
-	cancel_delayed_work_sync(&dev->mac_work);
-	mt76u_stop_stat_wk(&dev->mt76);
+	cancel_delayed_work_sync(&dev->mt76.mac_work);
+	mt76u_stop_tx(&dev->mt76);
 	mt76x02u_exit_beacon_config(dev);
 
 	if (test_bit(MT76_REMOVED, &dev->mt76.state))
 		return;
-
-	mutex_lock(&dev->mt76.mutex);
 
 	if (!mt76_poll(dev, MT_USB_DMA_CFG, MT_USB_DMA_CFG_TX_BUSY, 0, 1000))
 		dev_warn(dev->mt76.dev, "TX DMA did not stop\n");
@@ -101,7 +101,6 @@ static void mt76x0u_mac_stop(struct mt76x02_dev *dev)
 
 	if (!mt76_poll(dev, MT_USB_DMA_CFG, MT_USB_DMA_CFG_RX_BUSY, 0, 1000))
 		dev_warn(dev->mt76.dev, "RX DMA did not stop\n");
-	mutex_unlock(&dev->mt76.mutex);
 }
 
 static int mt76x0u_start(struct ieee80211_hw *hw)
@@ -109,29 +108,17 @@ static int mt76x0u_start(struct ieee80211_hw *hw)
 	struct mt76x02_dev *dev = hw->priv;
 	int ret;
 
-	mutex_lock(&dev->mt76.mutex);
-
 	ret = mt76x0_mac_start(dev);
 	if (ret)
-		goto out;
+		return ret;
 
 	mt76x0_phy_calibrate(dev, true);
-	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->mac_work,
+	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->mt76.mac_work,
 				     MT_MAC_WORK_INTERVAL);
 	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->cal_work,
 				     MT_CALIBRATE_INTERVAL);
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
-
-out:
-	mutex_unlock(&dev->mt76.mutex);
-	return ret;
-}
-
-static void mt76x0u_stop(struct ieee80211_hw *hw)
-{
-	struct mt76x02_dev *dev = hw->priv;
-
-	mt76x0u_mac_stop(dev);
+	return 0;
 }
 
 static const struct ieee80211_ops mt76x0u_ops = {
@@ -232,7 +219,7 @@ static int mt76x0u_probe(struct usb_interface *usb_intf,
 	struct usb_device *usb_dev = interface_to_usbdev(usb_intf);
 	struct mt76x02_dev *dev;
 	struct mt76_dev *mdev;
-	u32 asic_rev, mac_rev;
+	u32 mac_rev;
 	int ret;
 
 	mdev = mt76_alloc_device(&usb_dev->dev, sizeof(*dev), &mt76x0u_ops,
@@ -265,10 +252,14 @@ static int mt76x0u_probe(struct usb_interface *usb_intf,
 		goto err;
 	}
 
-	asic_rev = mt76_rr(dev, MT_ASIC_VERSION);
+	mdev->rev = mt76_rr(dev, MT_ASIC_VERSION);
 	mac_rev = mt76_rr(dev, MT_MAC_CSR0);
 	dev_info(mdev->dev, "ASIC revision: %08x MAC revision: %08x\n",
-		 asic_rev, mac_rev);
+		 mdev->rev, mac_rev);
+	if (!is_mt76x0(dev)) {
+		ret = -ENODEV;
+		goto err;
+	}
 
 	/* Note: vendor driver skips this check for MT76X0U */
 	if (!(mt76_rr(dev, MT_EFUSE_CTRL) & MT_EFUSE_CTRL_SEL))
@@ -310,8 +301,7 @@ static int __maybe_unused mt76x0_suspend(struct usb_interface *usb_intf,
 {
 	struct mt76x02_dev *dev = usb_get_intfdata(usb_intf);
 
-	mt76u_stop_queues(&dev->mt76);
-	mt76x0u_mac_stop(dev);
+	mt76u_stop_rx(&dev->mt76);
 	clear_bit(MT76_STATE_MCU_RUNNING, &dev->mt76.state);
 	mt76x0_chip_onoff(dev, false, false);
 
@@ -321,15 +311,11 @@ static int __maybe_unused mt76x0_suspend(struct usb_interface *usb_intf,
 static int __maybe_unused mt76x0_resume(struct usb_interface *usb_intf)
 {
 	struct mt76x02_dev *dev = usb_get_intfdata(usb_intf);
-	struct mt76_usb *usb = &dev->mt76.usb;
 	int ret;
 
-	ret = mt76u_submit_rx_buffers(&dev->mt76);
+	ret = mt76u_resume_rx(&dev->mt76);
 	if (ret < 0)
 		goto err;
-
-	tasklet_enable(&usb->rx_tasklet);
-	tasklet_enable(&dev->mt76.tx_tasklet);
 
 	ret = mt76x0u_init_hardware(dev);
 	if (ret)

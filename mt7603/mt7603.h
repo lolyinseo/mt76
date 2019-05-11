@@ -109,7 +109,6 @@ struct mt7603_dev {
 
 	ktime_t survey_time;
 	ktime_t ed_time;
-	int beacon_int;
 
 	struct mt76_queue q_rx;
 
@@ -127,8 +126,6 @@ struct mt7603_dev {
 	bool dynamic_sensitivity;
 	s8 sensitivity;
 
-	u8 beacon_mask;
-
 	u8 beacon_check;
 	u8 tx_hang_check;
 	u8 tx_dma_check;
@@ -144,9 +141,6 @@ struct mt7603_dev {
 	u32 reset_test;
 
 	unsigned int reset_cause[__RESET_CAUSE_MAX];
-
-	struct delayed_work mac_work;
-	struct tasklet_struct pre_tbtt_tasklet;
 };
 
 extern const struct mt76_driver_ops mt7603_drv_ops;
@@ -176,7 +170,7 @@ void mt7603_unregister_device(struct mt7603_dev *dev);
 int mt7603_eeprom_init(struct mt7603_dev *dev);
 int mt7603_dma_init(struct mt7603_dev *dev);
 void mt7603_dma_cleanup(struct mt7603_dev *dev);
-int mt7603_load_firmware(struct mt7603_dev *dev);
+int mt7603_mcu_init(struct mt7603_dev *dev);
 void mt7603_init_debugfs(struct mt7603_dev *dev);
 
 static inline void mt7603_irq_enable(struct mt7603_dev *dev, u32 mask)
@@ -223,8 +217,8 @@ void mt7603_wtbl_set_smps(struct mt7603_dev *dev, struct mt7603_sta *sta,
 void mt7603_filter_tx(struct mt7603_dev *dev, int idx, bool abort);
 
 int mt7603_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
-			  struct sk_buff *skb, enum mt76_txq_id qid,
-			  struct mt76_wcid *wcid, struct ieee80211_sta *sta,
+			  enum mt76_txq_id qid, struct mt76_wcid *wcid,
+			  struct ieee80211_sta *sta,
 			  struct mt76_tx_info *tx_info);
 
 void mt7603_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,

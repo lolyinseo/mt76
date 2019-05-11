@@ -21,29 +21,24 @@ static int mt76x2u_start(struct ieee80211_hw *hw)
 	struct mt76x02_dev *dev = hw->priv;
 	int ret;
 
-	mutex_lock(&dev->mt76.mutex);
-
 	ret = mt76x2u_mac_start(dev);
 	if (ret)
-		goto out;
+		return ret;
 
-	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
+	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mt76.mac_work,
 				     MT_MAC_WORK_INTERVAL);
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 
-out:
-	mutex_unlock(&dev->mt76.mutex);
-	return ret;
+	return 0;
 }
 
 static void mt76x2u_stop(struct ieee80211_hw *hw)
 {
 	struct mt76x02_dev *dev = hw->priv;
 
-	mutex_lock(&dev->mt76.mutex);
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
+	mt76u_stop_tx(&dev->mt76);
 	mt76x2u_stop_hw(dev);
-	mutex_unlock(&dev->mt76.mutex);
 }
 
 static int
@@ -52,6 +47,7 @@ mt76x2u_set_channel(struct mt76x02_dev *dev,
 {
 	int err;
 
+	cancel_delayed_work_sync(&dev->cal_work);
 	set_bit(MT76_RESET, &dev->mt76.state);
 
 	mt76_set_channel(&dev->mt76);
@@ -78,9 +74,6 @@ mt76x2u_config(struct ieee80211_hw *hw, u32 changed)
 {
 	struct mt76x02_dev *dev = hw->priv;
 	int err = 0;
-
-	if (changed & IEEE80211_CONF_CHANGE_CHANNEL)
-		cancel_delayed_work_sync(&dev->cal_work);
 
 	mutex_lock(&dev->mt76.mutex);
 

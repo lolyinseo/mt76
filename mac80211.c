@@ -214,6 +214,8 @@ mt76_init_sband(struct mt76_dev *dev, struct mt76_sband *msband,
 	vht_cap->cap |= IEEE80211_VHT_CAP_RXLDPC |
 			IEEE80211_VHT_CAP_RXSTBC_1 |
 			IEEE80211_VHT_CAP_SHORT_GI_80 |
+			IEEE80211_VHT_CAP_RX_ANTENNA_PATTERN |
+			IEEE80211_VHT_CAP_TX_ANTENNA_PATTERN |
 			(3 << IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_SHIFT);
 
 	return 0;
@@ -369,9 +371,15 @@ void mt76_unregister_device(struct mt76_dev *dev)
 
 	mt76_tx_status_check(dev, NULL, true);
 	ieee80211_unregister_hw(hw);
-	mt76_tx_free(dev);
 }
 EXPORT_SYMBOL_GPL(mt76_unregister_device);
+
+void mt76_free_device(struct mt76_dev *dev)
+{
+	mt76_tx_free(dev);
+	ieee80211_free_hw(dev->hw);
+}
+EXPORT_SYMBOL_GPL(mt76_free_device);
 
 void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
 {
@@ -384,7 +392,7 @@ void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(mt76_rx);
 
-static bool mt76_has_tx_pending(struct mt76_dev *dev)
+bool mt76_has_tx_pending(struct mt76_dev *dev)
 {
 	struct mt76_queue *q;
 	int i;
@@ -397,6 +405,7 @@ static bool mt76_has_tx_pending(struct mt76_dev *dev)
 
 	return false;
 }
+EXPORT_SYMBOL_GPL(mt76_has_tx_pending);
 
 void mt76_set_channel(struct mt76_dev *dev)
 {

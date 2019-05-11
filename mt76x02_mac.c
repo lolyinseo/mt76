@@ -469,13 +469,11 @@ void mt76x02_send_tx_status(struct mt76x02_dev *dev,
 	struct mt76x02_sta *msta = NULL;
 	struct mt76_dev *mdev = &dev->mt76;
 	struct sk_buff_head list;
-	bool status_noskb = false;
 
 	if (stat->pktid == MT_PACKET_ID_NO_ACK)
 		return;
 
 	rcu_read_lock();
-	mt76_tx_status_lock(mdev, &list);
 
 	if (stat->wcid < ARRAY_SIZE(dev->mt76.wcid))
 		wcid = rcu_dereference(dev->mt76.wcid[stat->wcid]);
@@ -487,6 +485,8 @@ void mt76x02_send_tx_status(struct mt76x02_dev *dev,
 		status.sta = container_of(priv, struct ieee80211_sta,
 					  drv_priv);
 	}
+
+	mt76_tx_status_lock(mdev, &list);
 
 	if (wcid) {
 		if (stat->pktid >= MT_PACKET_ID_FIRST)
@@ -507,7 +507,9 @@ void mt76x02_send_tx_status(struct mt76x02_dev *dev,
 		if (*update == 0 && stat_val == stat_cache &&
 		    stat->wcid == msta->status.wcid && msta->n_frames < 32) {
 			msta->n_frames++;
-			goto out;
+			mt76_tx_status_unlock(mdev, &list);
+			rcu_read_unlock();
+			return;
 		}
 
 		mt76x02_mac_fill_tx_status(dev, status.info, &msta->status,
@@ -523,15 +525,10 @@ void mt76x02_send_tx_status(struct mt76x02_dev *dev,
 
 	if (status.skb)
 		mt76_tx_status_skb_done(mdev, status.skb, &list);
-	else
-		status_noskb = true;
-
-out:
 	mt76_tx_status_unlock(mdev, &list);
 
-	if (status_noskb)
+	if (!status.skb)
 		ieee80211_tx_status_ext(mt76_hw(dev), &status);
-
 	rcu_read_unlock();
 }
 
@@ -774,6 +771,7 @@ void mt76x02_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,
 {
 	struct mt76x02_dev *dev = container_of(mdev, struct mt76x02_dev, mt76);
 	struct mt76x02_txwi *txwi;
+	u8 *txwi_ptr;
 
 	if (!e->txwi) {
 		dev_kfree_skb_any(e->skb);
@@ -782,7 +780,8 @@ void mt76x02_tx_complete_skb(struct mt76_dev *mdev, enum mt76_txq_id qid,
 
 	mt76x02_mac_poll_tx_status(dev, false);
 
-	txwi = (struct mt76x02_txwi *) &e->txwi->txwi;
+	txwi_ptr = mt76_get_txwi_ptr(mdev, e->txwi);
+	txwi = (struct mt76x02_txwi *)txwi_ptr;
 	trace_mac_txdone_add(dev, txwi->wcid, txwi->pktid);
 
 	mt76_tx_complete_skb(mdev, e->skb);
@@ -1033,7 +1032,7 @@ static void mt76x02_edcca_check(struct mt76x02_dev *dev)
 void mt76x02_mac_work(struct work_struct *work)
 {
 	struct mt76x02_dev *dev = container_of(work, struct mt76x02_dev,
-					       mac_work.work);
+					       mt76.mac_work.work);
 	int i, idx;
 
 	mutex_lock(&dev->mt76.mutex);
@@ -1046,7 +1045,7 @@ void mt76x02_mac_work(struct work_struct *work)
 		dev->aggr_stats[idx++] += val >> 16;
 	}
 
-	if (!dev->beacon_mask)
+	if (!dev->mt76.beacon_mask)
 		mt76x02_check_mac_err(dev);
 
 	if (dev->ed_monitor)
@@ -1056,7 +1055,7 @@ void mt76x02_mac_work(struct work_struct *work)
 
 	mt76_tx_status_check(&dev->mt76, NULL, false);
 
-	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
+	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mt76.mac_work,
 				     MT_MAC_WORK_INTERVAL);
 }
 

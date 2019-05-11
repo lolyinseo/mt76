@@ -21,11 +21,10 @@
 #include "mt76x2u.h"
 
 static const struct usb_device_id mt76x2u_device_table[] = {
-	{ USB_DEVICE(0x0e8d, 0x7612) }, /* Alfa AWUS036ACM */
 	{ USB_DEVICE(0x0b05, 0x1833) },	/* Asus USB-AC54 */
 	{ USB_DEVICE(0x0b05, 0x17eb) },	/* Asus USB-AC55 */
 	{ USB_DEVICE(0x0b05, 0x180b) },	/* Asus USB-N53 B1 */
-	{ USB_DEVICE(0x0e8d, 0x7612) },	/* Aukey USB-AC1200 */
+	{ USB_DEVICE(0x0e8d, 0x7612) },	/* Aukey USBAC1200 - Alfa AWUS036ACM */
 	{ USB_DEVICE(0x057c, 0x8503) },	/* Avm FRITZ!WLAN AC860 */
 	{ USB_DEVICE(0x7392, 0xb711) },	/* Edimax EW 7722 UAC */
 	{ USB_DEVICE(0x0846, 0x9053) },	/* Netgear A6210 */
@@ -69,6 +68,10 @@ static int mt76x2u_probe(struct usb_interface *intf,
 
 	mdev->rev = mt76_rr(dev, MT_ASIC_VERSION);
 	dev_info(mdev->dev, "ASIC revision: %08x\n", mdev->rev);
+	if (!is_mt76x2(dev)) {
+		err = -ENODEV;
+		goto err;
+	}
 
 	err = mt76x2u_register_device(dev);
 	if (err < 0)
@@ -104,8 +107,7 @@ static int __maybe_unused mt76x2u_suspend(struct usb_interface *intf,
 {
 	struct mt76x02_dev *dev = usb_get_intfdata(intf);
 
-	mt76u_stop_queues(&dev->mt76);
-	mt76x2u_stop_hw(dev);
+	mt76u_stop_rx(&dev->mt76);
 
 	return 0;
 }
@@ -113,15 +115,11 @@ static int __maybe_unused mt76x2u_suspend(struct usb_interface *intf,
 static int __maybe_unused mt76x2u_resume(struct usb_interface *intf)
 {
 	struct mt76x02_dev *dev = usb_get_intfdata(intf);
-	struct mt76_usb *usb = &dev->mt76.usb;
 	int err;
 
-	err = mt76u_submit_rx_buffers(&dev->mt76);
+	err = mt76u_resume_rx(&dev->mt76);
 	if (err < 0)
 		goto err;
-
-	tasklet_enable(&usb->rx_tasklet);
-	tasklet_enable(&dev->mt76.tx_tasklet);
 
 	err = mt76x2u_init_hardware(dev);
 	if (err < 0)

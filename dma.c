@@ -18,8 +18,6 @@
 #include "mt76.h"
 #include "dma.h"
 
-#define DMA_DUMMY_TXWI	((void *) ~0)
-
 static int
 mt76_dma_alloc_queue(struct mt76_dev *dev, struct mt76_queue *q,
 		     int idx, int n_desc, int bufsize,
@@ -67,7 +65,7 @@ mt76_dma_add_buf(struct mt76_dev *dev, struct mt76_queue *q,
 	int i, idx = -1;
 
 	if (txwi)
-		q->entry[q->head].txwi = DMA_DUMMY_TXWI;
+		q->entry[q->head].txwi = DMA_DUMMY_DATA;
 
 	for (i = 0; i < nbufs; i += 2, buf += 2) {
 		u32 buf0 = buf[0].addr, buf1 = 0;
@@ -126,8 +124,11 @@ mt76_dma_tx_cleanup_idx(struct mt76_dev *dev, struct mt76_queue *q, int idx,
 				 DMA_TO_DEVICE);
 	}
 
-	if (e->txwi == DMA_DUMMY_TXWI)
+	if (e->txwi == DMA_DUMMY_DATA)
 		e->txwi = NULL;
+
+	if (e->skb == DMA_DUMMY_DATA)
+		e->skb = NULL;
 
 	*prev_e = *e;
 	memset(e, 0, sizeof(*e));
@@ -174,7 +175,8 @@ mt76_dma_tx_cleanup(struct mt76_dev *dev, enum mt76_txq_id qid, bool flush)
 			dev->drv->tx_complete_skb(dev, qid, &entry);
 
 		if (entry.txwi) {
-			mt76_put_txwi(dev, entry.txwi);
+			if (!(dev->drv->txwi_flags & MT_TXWI_NO_FREE))
+				mt76_put_txwi(dev, entry.txwi);
 			wake = !flush;
 		}
 
@@ -270,7 +272,7 @@ mt76_dma_tx_queue_skb_raw(struct mt76_dev *dev, enum mt76_txq_id qid,
 
 	addr = dma_map_single(dev->dev, skb->data, skb->len,
 			      DMA_TO_DEVICE);
-	if (dma_mapping_error(dev->dev, addr))
+	if (unlikely(dma_mapping_error(dev->dev, addr)))
 		return -ENOMEM;
 
 	buf.addr = addr;
@@ -290,24 +292,28 @@ mt76_dma_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 		      struct ieee80211_sta *sta)
 {
 	struct mt76_queue *q = dev->q_tx[qid].q;
-	struct mt76_tx_info tx_info = {};
+	struct mt76_tx_info tx_info = {
+		.skb = skb,
+	};
 	int len, n = 0, ret = -ENOMEM;
 	struct mt76_queue_entry e;
 	struct mt76_txwi_cache *t;
 	struct sk_buff *iter;
 	dma_addr_t addr;
+	u8 *txwi;
 
 	t = mt76_get_txwi(dev);
 	if (!t) {
 		ieee80211_free_txskb(dev->hw, skb);
 		return -ENOMEM;
 	}
+	txwi = mt76_get_txwi_ptr(dev, t);
 
 	skb->prev = skb->next = NULL;
 
 	len = skb_headlen(skb);
 	addr = dma_map_single(dev->dev, skb->data, len, DMA_TO_DEVICE);
-	if (dma_mapping_error(dev->dev, addr))
+	if (unlikely(dma_mapping_error(dev->dev, addr)))
 		goto free;
 
 	tx_info.buf[n].addr = t->dma_addr;
@@ -321,7 +327,7 @@ mt76_dma_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 
 		addr = dma_map_single(dev->dev, iter->data, iter->len,
 				      DMA_TO_DEVICE);
-		if (dma_mapping_error(dev->dev, addr))
+		if (unlikely(dma_mapping_error(dev->dev, addr)))
 			goto unmap;
 
 		tx_info.buf[n].addr = addr;
@@ -329,11 +335,10 @@ mt76_dma_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 	}
 	tx_info.nbuf = n;
 
-	dma_sync_single_for_cpu(dev->dev, t->dma_addr, sizeof(t->txwi),
+	dma_sync_single_for_cpu(dev->dev, t->dma_addr, dev->drv->txwi_size,
 				DMA_TO_DEVICE);
-	ret = dev->drv->tx_prepare_skb(dev, &t->txwi, skb, qid, wcid, sta,
-				       &tx_info);
-	dma_sync_single_for_device(dev->dev, t->dma_addr, sizeof(t->txwi),
+	ret = dev->drv->tx_prepare_skb(dev, txwi, qid, wcid, sta, &tx_info);
+	dma_sync_single_for_device(dev->dev, t->dma_addr, dev->drv->txwi_size,
 				   DMA_TO_DEVICE);
 	if (ret < 0)
 		goto unmap;
@@ -344,7 +349,7 @@ mt76_dma_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 	}
 
 	return mt76_dma_add_buf(dev, q, tx_info.buf, tx_info.nbuf,
-				tx_info.info, skb, t);
+				tx_info.info, tx_info.skb, t);
 
 unmap:
 	for (n--; n > 0; n--)
@@ -352,7 +357,7 @@ unmap:
 				 tx_info.buf[n].len, DMA_TO_DEVICE);
 
 free:
-	e.skb = skb;
+	e.skb = tx_info.skb;
 	e.txwi = t;
 	dev->drv->tx_complete_skb(dev, qid, &e);
 	mt76_put_txwi(dev, t);
@@ -379,7 +384,7 @@ mt76_dma_rx_fill(struct mt76_dev *dev, struct mt76_queue *q)
 			break;
 
 		addr = dma_map_single(dev->dev, buf, len, DMA_FROM_DEVICE);
-		if (dma_mapping_error(dev->dev, addr)) {
+		if (unlikely(dma_mapping_error(dev->dev, addr))) {
 			skb_free_frag(buf);
 			break;
 		}
@@ -581,6 +586,7 @@ void mt76_dma_cleanup(struct mt76_dev *dev)
 {
 	int i;
 
+	netif_napi_del(&dev->tx_napi);
 	for (i = 0; i < ARRAY_SIZE(dev->q_tx); i++)
 		mt76_dma_tx_cleanup(dev, i, true);
 

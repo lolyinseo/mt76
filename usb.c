@@ -286,7 +286,6 @@ static int
 mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 		 int nsgs, gfp_t gfp)
 {
-	int sglen = SKB_WITH_OVERHEAD(q->buf_size);
 	int i;
 
 	for (i = 0; i < nsgs; i++) {
@@ -300,7 +299,7 @@ mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 
 		page = virt_to_head_page(data);
 		offset = data - page_address(page);
-		sg_set_page(&urb->sg[i], page, sglen, offset);
+		sg_set_page(&urb->sg[i], page, q->buf_size, offset);
 	}
 
 	if (i < nsgs) {
@@ -312,7 +311,7 @@ mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 	}
 
 	urb->num_sgs = max_t(int, i, urb->num_sgs);
-	urb->transfer_buffer_length = urb->num_sgs * sglen,
+	urb->transfer_buffer_length = urb->num_sgs * q->buf_size,
 	sg_init_marker(urb->sg, urb->num_sgs);
 
 	return i ? : -ENOMEM;
@@ -326,7 +325,7 @@ mt76u_refill_rx(struct mt76_dev *dev, struct urb *urb, int nsgs, gfp_t gfp)
 	if (dev->usb.sg_en) {
 		return mt76u_fill_rx_sg(dev, q, urb, nsgs, gfp);
 	} else {
-		urb->transfer_buffer_length = SKB_WITH_OVERHEAD(q->buf_size);
+		urb->transfer_buffer_length = q->buf_size;
 		urb->transfer_buffer = page_frag_alloc(&q->rx_page,
 						       q->buf_size, gfp);
 		return urb->transfer_buffer ? 0 : -ENOMEM;
@@ -447,8 +446,10 @@ mt76u_process_rx_entry(struct mt76_dev *dev, struct urb *urb)
 		return 0;
 
 	data_len = min_t(int, len, data_len - MT_DMA_HDR_LEN);
-	if (MT_DMA_HDR_LEN + data_len > SKB_WITH_OVERHEAD(q->buf_size))
+	if (MT_DMA_HDR_LEN + data_len > SKB_WITH_OVERHEAD(q->buf_size)) {
+		dev_err_ratelimited(dev->dev, "rx data too big %d\n", data_len);
 		return 0;
+	}
 
 	skb = build_skb(data, q->buf_size);
 	if (!skb)
@@ -540,7 +541,7 @@ static void mt76u_rx_tasklet(unsigned long data)
 	rcu_read_unlock();
 }
 
-int mt76u_submit_rx_buffers(struct mt76_dev *dev)
+static int mt76u_submit_rx_buffers(struct mt76_dev *dev)
 {
 	struct mt76_queue *q = &dev->q_rx[MT_RXQ_MAIN];
 	unsigned long flags;
@@ -558,7 +559,6 @@ int mt76u_submit_rx_buffers(struct mt76_dev *dev)
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(mt76u_submit_rx_buffers);
 
 static int mt76u_alloc_rx(struct mt76_dev *dev)
 {
@@ -605,14 +605,29 @@ static void mt76u_free_rx(struct mt76_dev *dev)
 	memset(&q->rx_page, 0, sizeof(q->rx_page));
 }
 
-static void mt76u_stop_rx(struct mt76_dev *dev)
+void mt76u_stop_rx(struct mt76_dev *dev)
 {
 	struct mt76_queue *q = &dev->q_rx[MT_RXQ_MAIN];
 	int i;
 
 	for (i = 0; i < q->ndesc; i++)
-		usb_kill_urb(q->entry[i].urb);
+		usb_poison_urb(q->entry[i].urb);
+
+	tasklet_kill(&dev->usb.rx_tasklet);
 }
+EXPORT_SYMBOL_GPL(mt76u_stop_rx);
+
+int mt76u_resume_rx(struct mt76_dev *dev)
+{
+	struct mt76_queue *q = &dev->q_rx[MT_RXQ_MAIN];
+	int i;
+
+	for (i = 0; i < q->ndesc; i++)
+		usb_unpoison_urb(q->entry[i].urb);
+
+	return mt76u_submit_rx_buffers(dev);
+}
+EXPORT_SYMBOL_GPL(mt76u_resume_rx);
 
 static void mt76u_tx_tasklet(unsigned long data)
 {
@@ -624,27 +639,32 @@ static void mt76u_tx_tasklet(unsigned long data)
 	int i;
 
 	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
+		u32 n_dequeued = 0, n_sw_dequeued = 0;
+
 		sq = &dev->q_tx[i];
 		q = sq->q;
 
-		spin_lock_bh(&q->lock);
-		while (true) {
-			if (!q->entry[q->head].done || !q->queued)
+		while (q->queued > n_dequeued) {
+			if (!q->entry[q->head].done)
 				break;
 
 			if (q->entry[q->head].schedule) {
 				q->entry[q->head].schedule = false;
-				sq->swq_queued--;
+				n_sw_dequeued++;
 			}
 
 			entry = q->entry[q->head];
+			q->entry[q->head].done = false;
 			q->head = (q->head + 1) % q->ndesc;
-			q->queued--;
+			n_dequeued++;
 
-			spin_unlock_bh(&q->lock);
 			dev->drv->tx_complete_skb(dev, i, &entry);
-			spin_lock_bh(&q->lock);
 		}
+
+		spin_lock_bh(&q->lock);
+
+		sq->swq_queued -= n_sw_dequeued;
+		q->queued -= n_dequeued;
 
 		wake = q->stopped && q->queued < q->ndesc - 8;
 		if (wake)
@@ -729,7 +749,9 @@ mt76u_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 		   struct ieee80211_sta *sta)
 {
 	struct mt76_queue *q = dev->q_tx[qid].q;
-	struct urb *urb;
+	struct mt76_tx_info tx_info = {
+		.skb = skb,
+	};
 	u16 idx = q->tail;
 	int err;
 
@@ -737,21 +759,20 @@ mt76u_tx_queue_skb(struct mt76_dev *dev, enum mt76_txq_id qid,
 		return -ENOSPC;
 
 	skb->prev = skb->next = NULL;
-	err = dev->drv->tx_prepare_skb(dev, NULL, skb, qid, wcid, sta, NULL);
+	err = dev->drv->tx_prepare_skb(dev, NULL, qid, wcid, sta, &tx_info);
 	if (err < 0)
 		return err;
 
-	q->entry[idx].done = false;
-	urb = q->entry[idx].urb;
-	err = mt76u_tx_setup_buffers(dev, skb, urb);
+	err = mt76u_tx_setup_buffers(dev, tx_info.skb, q->entry[idx].urb);
 	if (err < 0)
 		return err;
 
 	mt76u_fill_bulk_urb(dev, USB_DIR_OUT, q2ep(q->hw_idx),
-			    urb, mt76u_complete_tx, &q->entry[idx]);
+			    q->entry[idx].urb, mt76u_complete_tx,
+			    &q->entry[idx]);
 
 	q->tail = (q->tail + 1) % q->ndesc;
-	q->entry[idx].skb = skb;
+	q->entry[idx].skb = tx_info.skb;
 	q->queued++;
 
 	return idx;
@@ -828,38 +849,54 @@ static void mt76u_free_tx(struct mt76_dev *dev)
 	}
 }
 
-static void mt76u_stop_tx(struct mt76_dev *dev)
+void mt76u_stop_tx(struct mt76_dev *dev)
 {
+	struct mt76_queue_entry entry;
 	struct mt76_queue *q;
-	int i, j;
+	int i, j, ret;
 
-	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
-		q = dev->q_tx[i].q;
-		for (j = 0; j < q->ndesc; j++)
-			usb_kill_urb(q->entry[j].urb);
+	ret = wait_event_timeout(dev->tx_wait, !mt76_has_tx_pending(dev), HZ/5);
+	if (!ret) {
+		dev_err(dev->dev, "timed out waiting for pending tx\n");
+
+		for (i = 0; i < IEEE80211_NUM_ACS; i++) {
+			q = dev->q_tx[i].q;
+			for (j = 0; j < q->ndesc; j++)
+				usb_kill_urb(q->entry[j].urb);
+		}
+
+		tasklet_kill(&dev->tx_tasklet);
+
+		/* On device removal we maight queue skb's, but mt76u_tx_kick()
+		 * will fail to submit urb, cleanup those skb's manually.
+		 */
+		for (i = 0; i < IEEE80211_NUM_ACS; i++) {
+			q = dev->q_tx[i].q;
+
+			/* Assure we are in sync with killed tasklet. */
+			spin_lock_bh(&q->lock);
+			while (q->queued) {
+				entry = q->entry[q->head];
+				q->head = (q->head + 1) % q->ndesc;
+				q->queued--;
+
+				dev->drv->tx_complete_skb(dev, i, &entry);
+			}
+			spin_unlock_bh(&q->lock);
+		}
 	}
-}
 
-void mt76u_stop_queues(struct mt76_dev *dev)
-{
-	tasklet_disable(&dev->usb.rx_tasklet);
-	tasklet_disable(&dev->tx_tasklet);
-
-	mt76u_stop_rx(dev);
-	mt76u_stop_tx(dev);
-}
-EXPORT_SYMBOL_GPL(mt76u_stop_queues);
-
-void mt76u_stop_stat_wk(struct mt76_dev *dev)
-{
 	cancel_delayed_work_sync(&dev->usb.stat_work);
 	clear_bit(MT76_READING_STATS, &dev->state);
+
+	mt76_tx_status_check(dev, NULL, true);
 }
-EXPORT_SYMBOL_GPL(mt76u_stop_stat_wk);
+EXPORT_SYMBOL_GPL(mt76u_stop_tx);
 
 void mt76u_queues_deinit(struct mt76_dev *dev)
 {
-	mt76u_stop_queues(dev);
+	mt76u_stop_rx(dev);
+	mt76u_stop_tx(dev);
 
 	mt76u_free_rx(dev);
 	mt76u_free_tx(dev);

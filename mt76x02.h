@@ -90,10 +90,7 @@ struct mt76x02_dev {
 
 	struct sk_buff *rx_head;
 
-	struct napi_struct tx_napi;
-	struct tasklet_struct pre_tbtt_tasklet;
 	struct delayed_work cal_work;
-	struct delayed_work mac_work;
 	struct delayed_work wdt_work;
 
 	struct hrtimer pre_tbtt_timer;
@@ -104,11 +101,9 @@ struct mt76x02_dev {
 	u32 aggr_stats[32];
 
 	struct sk_buff *beacons[8];
-	u8 beacon_mask;
 	u8 beacon_data_mask;
 
 	u8 tbtt_count;
-	u16 beacon_int;
 
 	u32 tx_hang_reset;
 	u8 tx_hang_check;
@@ -185,8 +180,8 @@ irqreturn_t mt76x02_irq_handler(int irq, void *dev_instance);
 void mt76x02_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 		struct sk_buff *skb);
 int mt76x02_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
-			   struct sk_buff *skb, enum mt76_txq_id qid,
-			   struct mt76_wcid *wcid, struct ieee80211_sta *sta,
+			   enum mt76_txq_id qid, struct mt76_wcid *wcid,
+			   struct ieee80211_sta *sta,
 			   struct mt76_tx_info *tx_info);
 void mt76x02_sw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		     const u8 *mac);
@@ -213,6 +208,13 @@ void mt76x02_enqueue_buffered_bc(struct mt76x02_dev *dev,
 void mt76x02_mac_start(struct mt76x02_dev *dev);
 
 void mt76x02_init_debugfs(struct mt76x02_dev *dev);
+
+static inline bool is_mt76x0(struct mt76x02_dev *dev)
+{
+	return mt76_chip(&dev->mt76) == 0x7610 ||
+	       mt76_chip(&dev->mt76) == 0x7630 ||
+	       mt76_chip(&dev->mt76) == 0x7650;
+}
 
 static inline bool is_mt76x2(struct mt76x02_dev *dev)
 {

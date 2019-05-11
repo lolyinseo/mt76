@@ -25,17 +25,13 @@ static int mt76x0e_start(struct ieee80211_hw *hw)
 {
 	struct mt76x02_dev *dev = hw->priv;
 
-	mutex_lock(&dev->mt76.mutex);
-
 	mt76x02_mac_start(dev);
 	mt76x0_phy_calibrate(dev, true);
-	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->mac_work,
+	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->mt76.mac_work,
 				     MT_MAC_WORK_INTERVAL);
 	ieee80211_queue_delayed_work(dev->mt76.hw, &dev->cal_work,
 				     MT_CALIBRATE_INTERVAL);
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
-
-	mutex_unlock(&dev->mt76.mutex);
 
 	return 0;
 }
@@ -43,9 +39,8 @@ static int mt76x0e_start(struct ieee80211_hw *hw)
 static void mt76x0e_stop_hw(struct mt76x02_dev *dev)
 {
 	cancel_delayed_work_sync(&dev->cal_work);
-	cancel_delayed_work_sync(&dev->mac_work);
+	cancel_delayed_work_sync(&dev->mt76.mac_work);
 
-	mutex_lock(&dev->mt76.mutex);
 	if (!mt76_poll(dev, MT_WPDMA_GLO_CFG, MT_WPDMA_GLO_CFG_TX_DMA_BUSY,
 		       0, 1000))
 		dev_warn(dev->mt76.dev, "TX DMA did not stop\n");
@@ -57,7 +52,6 @@ static void mt76x0e_stop_hw(struct mt76x02_dev *dev)
 		       0, 1000))
 		dev_warn(dev->mt76.dev, "TX DMA did not stop\n");
 	mt76_clear(dev, MT_WPDMA_GLO_CFG, MT_WPDMA_GLO_CFG_RX_DMA_EN);
-	mutex_unlock(&dev->mt76.mutex);
 }
 
 static void mt76x0e_stop(struct ieee80211_hw *hw)
@@ -218,7 +212,7 @@ error:
 static void mt76x0e_cleanup(struct mt76x02_dev *dev)
 {
 	clear_bit(MT76_STATE_INITIALIZED, &dev->mt76.state);
-	tasklet_disable(&dev->pre_tbtt_tasklet);
+	tasklet_disable(&dev->mt76.pre_tbtt_tasklet);
 	mt76x0_chip_onoff(dev, false, false);
 	mt76x0e_stop_hw(dev);
 	mt76x02_dma_cleanup(dev);
@@ -233,7 +227,7 @@ mt76x0e_remove(struct pci_dev *pdev)
 
 	mt76_unregister_device(mdev);
 	mt76x0e_cleanup(dev);
-	ieee80211_free_hw(mdev->hw);
+	mt76_free_device(mdev);
 }
 
 static const struct pci_device_id mt76x0e_device_table[] = {
