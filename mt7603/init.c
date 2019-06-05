@@ -437,7 +437,9 @@ mt7603_regd_notifier(struct wiphy *wiphy,
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct mt7603_dev *dev = hw->priv;
 
-	dev->ed_monitor = request->dfs_region == NL80211_DFS_ETSI;
+	dev->region = request->dfs_region;
+	dev->ed_monitor = dev->ed_monitor_enabled &&
+			  dev->region == NL80211_DFS_ETSI;
 }
 
 static int
@@ -463,8 +465,12 @@ mt7603_init_txpower(struct mt7603_dev *dev,
 	u8 *eeprom = (u8 *)dev->mt76.eeprom.data;
 	int target_power = eeprom[MT_EE_TX_POWER_0_START_2G + 2] & ~BIT(7);
 	u8 *rate_power = &eeprom[MT_EE_TX_POWER_CCK];
+	bool ext_pa = eeprom[MT_EE_NIC_CONF_0 + 1] & BIT(1);
 	int max_offset, cur_offset;
 	int i;
+
+	if (ext_pa)
+		target_power = eeprom[MT_EE_TX_POWER_TSSI_OFF] & ~BIT(7);
 
 	if (target_power & BIT(6))
 		target_power = -(target_power & GENMASK(5, 0));
@@ -488,7 +494,7 @@ mt7603_init_txpower(struct mt7603_dev *dev,
 
 	for (i = 0; i < sband->n_channels; i++) {
 		chan = &sband->channels[i];
-		chan->max_power = target_power;
+		chan->max_power = min_t(int, chan->max_reg_power, target_power);
 		chan->orig_mpwr = target_power;
 	}
 }
