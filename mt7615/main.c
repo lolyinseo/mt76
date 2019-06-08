@@ -37,6 +37,7 @@ static int get_omac_idx(enum nl80211_iftype type, u32 mask)
 
 	switch (type) {
 	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_MESH_POINT:
 		/* ap use hw bssid 0 and ext bssid */
 		if (~mask & BIT(HW_BSSID_0))
 			return HW_BSSID_0;
@@ -94,7 +95,7 @@ static int mt7615_add_interface(struct ieee80211_hw *hw,
 
 	dev->vif_mask |= BIT(mvif->idx);
 	dev->omac_mask |= BIT(mvif->omac_idx);
-	idx = MT7615_WTBL_RESERVED - 1 - mvif->idx;
+	idx = MT7615_WTBL_RESERVED - mvif->idx;
 	mvif->sta.wcid.idx = idx;
 	mvif->sta.wcid.hw_key_idx = -1;
 
@@ -191,28 +192,28 @@ static int mt7615_config(struct ieee80211_hw *hw, u32 changed)
 	struct mt7615_dev *dev = hw->priv;
 	int ret = 0;
 
-	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
-		mutex_lock(&dev->mt76.mutex);
+	mutex_lock(&dev->mt76.mutex);
 
+	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 		ieee80211_stop_queues(hw);
 		ret = mt7615_set_channel(dev, &hw->conf.chandef);
 		ieee80211_wake_queues(hw);
-
-		mutex_unlock(&dev->mt76.mutex);
 	}
 
-	if (changed & IEEE80211_CONF_CHANGE_MONITOR) {
-		mutex_lock(&dev->mt76.mutex);
+	if (changed & IEEE80211_CONF_CHANGE_POWER)
+		ret = mt7615_mcu_set_tx_power(dev);
 
+	if (changed & IEEE80211_CONF_CHANGE_MONITOR) {
 		if (!(hw->conf.flags & IEEE80211_CONF_MONITOR))
 			dev->mt76.rxfilter |= MT_WF_RFCR_DROP_OTHER_UC;
 		else
 			dev->mt76.rxfilter &= ~MT_WF_RFCR_DROP_OTHER_UC;
 
 		mt76_wr(dev, MT_WF_RFCR, dev->mt76.rxfilter);
-
-		mutex_unlock(&dev->mt76.mutex);
 	}
+
+	mutex_unlock(&dev->mt76.mutex);
+
 	return ret;
 }
 
@@ -490,4 +491,5 @@ const struct ieee80211_ops mt7615_ops = {
 	.sw_scan_start = mt7615_sw_scan,
 	.sw_scan_complete = mt7615_sw_scan_complete,
 	.release_buffered_frames = mt76_release_buffered_frames,
+	.get_txpower = mt76_get_txpower,
 };

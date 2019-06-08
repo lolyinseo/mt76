@@ -286,7 +286,7 @@ static int
 mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 		 int nsgs, gfp_t gfp)
 {
-	int i;
+	int i, data_size = SKB_WITH_OVERHEAD(q->buf_size);
 
 	for (i = 0; i < nsgs; i++) {
 		struct page *page;
@@ -299,7 +299,7 @@ mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 
 		page = virt_to_head_page(data);
 		offset = data - page_address(page);
-		sg_set_page(&urb->sg[i], page, q->buf_size, offset);
+		sg_set_page(&urb->sg[i], page, data_size, offset);
 	}
 
 	if (i < nsgs) {
@@ -311,7 +311,7 @@ mt76u_fill_rx_sg(struct mt76_dev *dev, struct mt76_queue *q, struct urb *urb,
 	}
 
 	urb->num_sgs = max_t(int, i, urb->num_sgs);
-	urb->transfer_buffer_length = urb->num_sgs * q->buf_size,
+	urb->transfer_buffer_length = urb->num_sgs * data_size;
 	sg_init_marker(urb->sg, urb->num_sgs);
 
 	return i ? : -ENOMEM;
@@ -429,6 +429,48 @@ static int mt76u_get_rx_entry_len(u8 *data, u32 data_len)
 	return dma_len;
 }
 
+static struct sk_buff *
+mt76u_build_rx_skb(u8 *data, int len, int buf_size,
+		   int *nsgs)
+{
+	int data_len = min(len, MT_SKB_HEAD_LEN);
+	struct sk_buff *skb;
+
+	if (SKB_WITH_OVERHEAD(buf_size) >= MT_DMA_HDR_LEN + len) {
+		/* fast path */
+		skb = build_skb(data, buf_size);
+		if (!skb)
+			return NULL;
+
+		skb_reserve(skb, MT_DMA_HDR_LEN);
+		__skb_put(skb, len);
+
+		return skb;
+	}
+
+	/* slow path, not enough space for data and
+	 * skb_shared_info
+	 */
+	skb = alloc_skb(data_len, GFP_ATOMIC);
+	if (!skb)
+		return NULL;
+
+	skb_put_data(skb, data + MT_DMA_HDR_LEN, data_len);
+	data += (data_len + MT_DMA_HDR_LEN);
+	len -= data_len;
+	if (len > 0) {
+		struct page *page = virt_to_head_page(data);
+		int offset = data - (u8 *)page_address(page);
+
+		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
+				page, offset, len, buf_size);
+	} else {
+		*nsgs = 0;
+	}
+
+	return skb;
+}
+
 static int
 mt76u_process_rx_entry(struct mt76_dev *dev, struct urb *urb)
 {
@@ -446,19 +488,11 @@ mt76u_process_rx_entry(struct mt76_dev *dev, struct urb *urb)
 		return 0;
 
 	data_len = min_t(int, len, data_len - MT_DMA_HDR_LEN);
-	if (MT_DMA_HDR_LEN + data_len > SKB_WITH_OVERHEAD(q->buf_size)) {
-		dev_err_ratelimited(dev->dev, "rx data too big %d\n", data_len);
-		return 0;
-	}
-
-	skb = build_skb(data, q->buf_size);
+	skb = mt76u_build_rx_skb(data, data_len, q->buf_size, &nsgs);
 	if (!skb)
 		return 0;
 
-	skb_reserve(skb, MT_DMA_HDR_LEN);
-	__skb_put(skb, data_len);
 	len -= data_len;
-
 	while (len > 0 && nsgs < urb->num_sgs) {
 		data_len = min_t(int, len, urb->sg[nsgs].length);
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
@@ -577,8 +611,12 @@ static int mt76u_alloc_rx(struct mt76_dev *dev)
 	if (!q->entry)
 		return -ENOMEM;
 
-	q->buf_size = dev->usb.sg_en ? MT_RX_BUF_SIZE : PAGE_SIZE;
+	if (dev->usb.sg_en)
+		q->buf_size = MT_BUF_WITH_OVERHEAD(MT_RX_BUF_SIZE);
+	else
+		q->buf_size = PAGE_SIZE;
 	q->ndesc = MT_NUM_RX_ENTRIES;
+
 	for (i = 0; i < q->ndesc; i++) {
 		err = mt76u_rx_urb_alloc(dev, &q->entry[i]);
 		if (err < 0)
