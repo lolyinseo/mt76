@@ -188,6 +188,7 @@ static int mt7615_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	case WLAN_CIPHER_SUITE_GCMP:
 	case WLAN_CIPHER_SUITE_GCMP_256:
 	case WLAN_CIPHER_SUITE_SMS4:
+	case WLAN_CIPHER_SUITE_AES_CMAC:
 		break;
 	default:
 		return -EOPNOTSUPP;

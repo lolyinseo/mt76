@@ -907,6 +907,8 @@ mt7615_get_key_info(struct ieee80211_key_conf *key, u8 *key_data)
 		return MT_CIPHER_GCMP_256;
 	case WLAN_CIPHER_SUITE_SMS4:
 		return MT_CIPHER_WAPI;
+	case WLAN_CIPHER_SUITE_AES_CMAC:
+		return MT_CIPHER_BIP_CMAC_128;
 	default:
 		return MT_CIPHER_NONE;
 	}
@@ -939,6 +941,7 @@ int mt7615_mcu_set_wtbl_key(struct mt7615_dev *dev, int wcid,
 		if (cipher == MT_CIPHER_NONE)
 			return -EOPNOTSUPP;
 
+		req.key.ikv = (cipher == MT_CIPHER_BIP_CMAC_128);
 		req.key.rkv = 1;
 		req.key.cipher_id = cipher;
 		req.key.key_id = key->keyidx;
