@@ -32,9 +32,6 @@
 #define MT_RX_BUF_SIZE      2048
 #define MT_SKB_HEAD_LEN     128
 
-#define MT_BUF_WITH_OVERHEAD(x) \
-	((x) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
-
 struct mt76_dev;
 struct mt76_wcid;
 
@@ -296,6 +293,7 @@ struct mt76_hw_cap {
 #define MT_TXWI_NO_FREE			BIT(0)
 
 struct mt76_driver_ops {
+	bool tx_aligned4_skbs;
 	u32 txwi_flags;
 	u16 txwi_size;
 
@@ -385,7 +383,8 @@ enum mt76u_out_ep {
 	__MT_EP_OUT_MAX,
 };
 
-#define MT_SG_MAX_SIZE		8
+#define MT_TX_SG_MAX_SIZE	8
+#define MT_RX_SG_MAX_SIZE	1
 #define MT_NUM_TX_ENTRIES	256
 #define MT_NUM_RX_ENTRIES	128
 #define MCU_RESP_URB_SIZE	1024
@@ -397,9 +396,7 @@ struct mt76_usb {
 	struct delayed_work stat_work;
 
 	u8 out_ep[__MT_EP_OUT_MAX];
-	u16 out_max_packet;
 	u8 in_ep[__MT_EP_IN_MAX];
-	u16 in_max_packet;
 	bool sg_en;
 
 	struct mt76u_mcu {
@@ -487,6 +484,8 @@ struct mt76_dev {
 	struct mt76_rate_power rate_power;
 	int txpower_conf;
 	int txpower_cur;
+
+	enum nl80211_dfs_regions region;
 
 	u32 debugfs_reg;
 
@@ -677,6 +676,20 @@ static inline struct mt76_tx_cb *mt76_tx_skb_cb(struct sk_buff *skb)
 	BUILD_BUG_ON(sizeof(struct mt76_tx_cb) >
 		     sizeof(IEEE80211_SKB_CB(skb)->status.status_driver_data));
 	return ((void *) IEEE80211_SKB_CB(skb)->status.status_driver_data);
+}
+
+static inline void mt76_insert_hdr_pad(struct sk_buff *skb)
+{
+	int len = ieee80211_get_hdrlen_from_skb(skb);
+
+	if (len % 4 == 0)
+		return;
+
+	skb_push(skb, 2);
+	memmove(skb->data, skb->data + 2, len);
+
+	skb->data[len] = 0;
+	skb->data[len + 1] = 0;
 }
 
 static inline bool mt76_is_skb_pktid(u8 pktid)

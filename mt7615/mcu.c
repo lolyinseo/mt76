@@ -759,22 +759,23 @@ int mt7615_mcu_set_bss_info(struct mt7615_dev *dev,
 		conn_type = CONNECTION_INFRA_AP;
 		break;
 	case NL80211_IFTYPE_STATION: {
-		struct ieee80211_sta *sta;
-		struct mt7615_sta *msta;
+		/* TODO: enable BSS_INFO_UAPSD & BSS_INFO_PM */
+		if (en) {
+			struct ieee80211_sta *sta;
+			struct mt7615_sta *msta;
 
-		rcu_read_lock();
+			rcu_read_lock();
+			sta = ieee80211_find_sta(vif, vif->bss_conf.bssid);
+			if (!sta) {
+				rcu_read_unlock();
+				return -EINVAL;
+			}
 
-		sta = ieee80211_find_sta(vif, vif->bss_conf.bssid);
-		if (!sta) {
+			msta = (struct mt7615_sta *)sta->drv_priv;
+			tx_wlan_idx = msta->wcid.idx;
 			rcu_read_unlock();
-			return -EINVAL;
 		}
-
-		msta = (struct mt7615_sta *)sta->drv_priv;
-		tx_wlan_idx = msta->wcid.idx;
 		conn_type = CONNECTION_INFRA_STA;
-
-		rcu_read_unlock();
 		break;
 	}
 	default:
@@ -970,7 +971,7 @@ int mt7615_mcu_add_wtbl(struct mt7615_dev *dev, struct ieee80211_vif *vif,
 		.rx_wtbl = {
 			.tag = cpu_to_le16(WTBL_RX),
 			.len = cpu_to_le16(sizeof(struct wtbl_rx)),
-			.rca1 = vif->type == NL80211_IFTYPE_STATION,
+			.rca1 = vif->type != NL80211_IFTYPE_AP,
 			.rca2 = 1,
 			.rv = 1,
 		},
@@ -1040,30 +1041,11 @@ int mt7615_mcu_set_sta_rec_bmc(struct mt7615_dev *dev,
 				   &req, sizeof(req), true);
 }
 
-static void sta_rec_convert_vif_type(enum nl80211_iftype type, u32 *conn_type)
-{
-	switch (type) {
-	case NL80211_IFTYPE_AP:
-	case NL80211_IFTYPE_MESH_POINT:
-		if (conn_type)
-			*conn_type = CONNECTION_INFRA_STA;
-		break;
-	case NL80211_IFTYPE_STATION:
-		if (conn_type)
-			*conn_type = CONNECTION_INFRA_AP;
-		break;
-	default:
-		WARN_ON(1);
-		break;
-	};
-}
-
 int mt7615_mcu_set_sta_rec(struct mt7615_dev *dev, struct ieee80211_vif *vif,
 			   struct ieee80211_sta *sta, bool en)
 {
 	struct mt7615_vif *mvif = (struct mt7615_vif *)vif->drv_priv;
 	struct mt7615_sta *msta = (struct mt7615_sta *)sta->drv_priv;
-	u32 conn_type = 0;
 
 	struct {
 		struct sta_req_hdr hdr;
@@ -1085,8 +1067,18 @@ int mt7615_mcu_set_sta_rec(struct mt7615_dev *dev, struct ieee80211_vif *vif,
 	};
 	memcpy(req.basic.peer_addr, sta->addr, ETH_ALEN);
 
-	sta_rec_convert_vif_type(vif->type, &conn_type);
-	req.basic.conn_type = cpu_to_le32(conn_type);
+	switch (vif->type) {
+	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_MESH_POINT:
+		req.basic.conn_type = cpu_to_le32(CONNECTION_INFRA_STA);
+		break;
+	case NL80211_IFTYPE_STATION:
+		req.basic.conn_type = cpu_to_le32(CONNECTION_INFRA_AP);
+		break;
+	default:
+		WARN_ON(1);
+		break;
+	};
 
 	if (en) {
 		req.basic.conn_state = CONN_STATE_PORT_SECURE;
@@ -1158,9 +1150,10 @@ int mt7615_mcu_set_tx_power(struct mt7615_dev *dev)
 {
 	int i, ret, n_chains = hweight8(dev->mt76.antenna_mask);
 	struct cfg80211_chan_def *chandef = &dev->mt76.chandef;
+	int freq = chandef->center_freq1, len, target_chains;
 	u8 *req, *data, *eep = (u8 *)dev->mt76.eeprom.data;
+	enum nl80211_band band = chandef->chan->band;
 	struct ieee80211_hw *hw = mt76_hw(dev);
-	int freq = chandef->center_freq1, len;
 	struct {
 		u8 center_chan;
 		u8 dbdc_idx;
@@ -1168,7 +1161,7 @@ int mt7615_mcu_set_tx_power(struct mt7615_dev *dev)
 		u8 rsv;
 	} __packed req_hdr = {
 		.center_chan = ieee80211_frequency_to_channel(freq),
-		.band = chandef->chan->band,
+		.band = band,
 	};
 	s8 tx_power;
 
@@ -1199,10 +1192,11 @@ int mt7615_mcu_set_tx_power(struct mt7615_dev *dev)
 	tx_power = max_t(s8, tx_power, 0);
 	dev->mt76.txpower_cur = tx_power;
 
-	for (i = 0; i < n_chains; i++) {
+	target_chains = mt7615_ext_pa_enabled(dev, band) ? 1 : n_chains;
+	for (i = 0; i < target_chains; i++) {
 		int index = -MT_EE_NIC_CONF_0;
 
-		ret = mt7615_eeprom_get_power_index(chandef->chan, i);
+		ret = mt7615_eeprom_get_power_index(dev, chandef->chan, i);
 		if (ret < 0)
 			goto out;
 
