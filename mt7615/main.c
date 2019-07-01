@@ -137,10 +137,16 @@ static int mt7615_set_channel(struct mt7615_dev *dev)
 	cancel_delayed_work_sync(&dev->mt76.mac_work);
 	set_bit(MT76_RESET, &dev->mt76.state);
 
+	mt7615_dfs_check_channel(dev);
+
 	mt76_set_channel(&dev->mt76);
 
 	ret = mt7615_mcu_set_channel(dev);
 	if (ret)
+		return ret;
+
+	ret = mt7615_dfs_init_radar_detector(dev);
+	if (ret < 0)
 		return ret;
 
 	clear_bit(MT76_RESET, &dev->mt76.state);
@@ -296,6 +302,18 @@ static void mt7615_bss_info_changed(struct ieee80211_hw *hw,
 		mt7615_mcu_set_bcn(dev, vif, info->enable_beacon);
 	}
 
+	mutex_unlock(&dev->mt76.mutex);
+}
+
+static void
+mt7615_channel_switch_beacon(struct ieee80211_hw *hw,
+			     struct ieee80211_vif *vif,
+			     struct cfg80211_chan_def *chandef)
+{
+	struct mt7615_dev *dev = hw->priv;
+
+	mutex_lock(&dev->mt76.mutex);
+	mt7615_mcu_set_bcn(dev, vif, true);
 	mutex_unlock(&dev->mt76.mutex);
 }
 
@@ -490,4 +508,5 @@ const struct ieee80211_ops mt7615_ops = {
 	.sw_scan_complete = mt7615_sw_scan_complete,
 	.release_buffered_frames = mt76_release_buffered_frames,
 	.get_txpower = mt76_get_txpower,
+	.channel_switch_beacon = mt7615_channel_switch_beacon,
 };
