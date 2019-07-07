@@ -248,6 +248,7 @@ static int mt7615_mcu_send_firmware(struct mt7615_dev *dev, const void *data,
 
 		data += cur_len;
 		len -= cur_len;
+		mt76_queue_tx_cleanup(dev, MT_TXQ_FWDL, false);
 	}
 
 	return ret;
@@ -313,9 +314,9 @@ static int mt7615_driver_own(struct mt7615_dev *dev)
 
 static int mt7615_load_patch(struct mt7615_dev *dev)
 {
-	const struct firmware *fw;
-	const struct mt7615_patch_hdr *hdr;
 	const char *firmware = MT7615_ROM_PATCH;
+	const struct mt7615_patch_hdr *hdr;
+	const struct firmware *fw = NULL;
 	int len, ret, sem;
 
 	sem = mt7615_mcu_patch_sem_ctrl(dev, 1);
@@ -331,7 +332,7 @@ static int mt7615_load_patch(struct mt7615_dev *dev)
 
 	ret = request_firmware(&fw, firmware, dev->mt76.dev);
 	if (ret)
-		return ret;
+		goto out;
 
 	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
 		dev_err(dev->mt76.dev, "Invalid firmware\n");
@@ -379,7 +380,7 @@ out:
 	return ret;
 }
 
-static u32 gen_dl_mode(u8 feature_set, bool is_cr4)
+static u32 mt7615_mcu_gen_dl_mode(u8 feature_set, bool is_cr4)
 {
 	u32 ret = 0;
 
@@ -393,14 +394,45 @@ static u32 gen_dl_mode(u8 feature_set, bool is_cr4)
 	return ret;
 }
 
+static int
+mt7615_mcu_send_ram_firmware(struct mt7615_dev *dev,
+			     const struct mt7615_fw_trailer *hdr,
+			     const u8 *data, bool is_cr4)
+{
+	int n_region = is_cr4 ? CR4_REGION_NUM : N9_REGION_NUM;
+	int err, i, offset = 0;
+	u32 len, addr, mode;
+
+	for (i = 0; i < n_region; i++) {
+		mode = mt7615_mcu_gen_dl_mode(hdr[i].feature_set, is_cr4);
+		len = le32_to_cpu(hdr[i].len) + IMG_CRC_LEN;
+		addr = le32_to_cpu(hdr[i].addr);
+
+		err = mt7615_mcu_init_download(dev, addr, len, mode);
+		if (err) {
+			dev_err(dev->mt76.dev, "Download request failed\n");
+			return err;
+		}
+
+		err = mt7615_mcu_send_firmware(dev, data + offset, len);
+		if (err) {
+			dev_err(dev->mt76.dev, "Failed to send firmware to device\n");
+			return err;
+		}
+
+		offset += len;
+	}
+
+	return 0;
+}
+
 static int mt7615_load_ram(struct mt7615_dev *dev)
 {
 	const struct firmware *fw;
 	const struct mt7615_fw_trailer *hdr;
 	const char *n9_firmware = MT7615_FIRMWARE_N9;
 	const char *cr4_firmware = MT7615_FIRMWARE_CR4;
-	u32 n9_ilm_addr, offset;
-	int i, ret;
+	int ret;
 
 	ret = request_firmware(&fw, n9_firmware, dev->mt76.dev);
 	if (ret)
@@ -418,31 +450,12 @@ static int mt7615_load_ram(struct mt7615_dev *dev)
 	dev_info(dev->mt76.dev, "N9 Firmware Version: %.10s, Build Time: %.15s\n",
 		 hdr->fw_ver, hdr->build_date);
 
-	n9_ilm_addr = le32_to_cpu(hdr->addr);
+	ret = mt7615_mcu_send_ram_firmware(dev, hdr, fw->data, false);
+	if (ret)
+		goto out;
 
-	for (offset = 0, i = 0; i < N9_REGION_NUM; i++) {
-		u32 len, addr, mode;
-
-		len = le32_to_cpu(hdr[i].len) + IMG_CRC_LEN;
-		addr = le32_to_cpu(hdr[i].addr);
-		mode = gen_dl_mode(hdr[i].feature_set, false);
-
-		ret = mt7615_mcu_init_download(dev, addr, len, mode);
-		if (ret) {
-			dev_err(dev->mt76.dev, "Download request failed\n");
-			goto out;
-		}
-
-		ret = mt7615_mcu_send_firmware(dev, fw->data + offset, len);
-		if (ret) {
-			dev_err(dev->mt76.dev, "Failed to send firmware to device\n");
-			goto out;
-		}
-
-		offset += len;
-	}
-
-	ret = mt7615_mcu_start_firmware(dev, n9_ilm_addr, FW_START_OVERRIDE);
+	ret = mt7615_mcu_start_firmware(dev, le32_to_cpu(hdr->addr),
+					FW_START_OVERRIDE);
 	if (ret) {
 		dev_err(dev->mt76.dev, "Failed to start N9 firmware\n");
 		goto out;
@@ -466,27 +479,9 @@ static int mt7615_load_ram(struct mt7615_dev *dev)
 	dev_info(dev->mt76.dev, "CR4 Firmware Version: %.10s, Build Time: %.15s\n",
 		 hdr->fw_ver, hdr->build_date);
 
-	for (offset = 0, i = 0; i < CR4_REGION_NUM; i++) {
-		u32 len, addr, mode;
-
-		len = le32_to_cpu(hdr[i].len) + IMG_CRC_LEN;
-		addr = le32_to_cpu(hdr[i].addr);
-		mode = gen_dl_mode(hdr[i].feature_set, true);
-
-		ret = mt7615_mcu_init_download(dev, addr, len, mode);
-		if (ret) {
-			dev_err(dev->mt76.dev, "Download request failed\n");
-			goto out;
-		}
-
-		ret = mt7615_mcu_send_firmware(dev, fw->data + offset, len);
-		if (ret) {
-			dev_err(dev->mt76.dev, "Failed to send firmware to device\n");
-			goto out;
-		}
-
-		offset += len;
-	}
+	ret = mt7615_mcu_send_ram_firmware(dev, hdr, fw->data, true);
+	if (ret)
+		goto out;
 
 	ret = mt7615_mcu_start_firmware(dev, 0, FW_START_WORKING_PDA_CR4);
 	if (ret)
@@ -524,6 +519,8 @@ static int mt7615_load_firmware(struct mt7615_dev *dev)
 		dev_err(dev->mt76.dev, "Timeout for initializing firmware\n");
 		return -EIO;
 	}
+
+	mt76_queue_tx_cleanup(dev, MT_TXQ_FWDL, false);
 
 	dev_dbg(dev->mt76.dev, "Firmware init done\n");
 
@@ -769,7 +766,7 @@ mt7615_mcu_bss_info_ext_header(struct mt7615_vif *mvif, u8 *data)
 /* SIFS 20us + 512 byte beacon tranmitted by 1Mbps (3906us) */
 #define BCN_TX_ESTIMATE_TIME (4096 + 20)
 	struct bss_info_ext_bss *hdr = (struct bss_info_ext_bss *)data;
-	int ext_bss_idx;
+	int ext_bss_idx, tsf_offset;
 
 	ext_bss_idx = mvif->omac_idx - EXT_BSSID_START;
 	if (ext_bss_idx < 0)
@@ -777,7 +774,8 @@ mt7615_mcu_bss_info_ext_header(struct mt7615_vif *mvif, u8 *data)
 
 	hdr->tag = cpu_to_le16(BSS_INFO_EXT_BSS);
 	hdr->len = cpu_to_le16(sizeof(struct bss_info_ext_bss));
-	hdr->mbss_tsf_offset = ext_bss_idx * BCN_TX_ESTIMATE_TIME;
+	tsf_offset = ext_bss_idx * BCN_TX_ESTIMATE_TIME;
+	hdr->mbss_tsf_offset = cpu_to_le32(tsf_offset);
 }
 
 int mt7615_mcu_set_bss_info(struct mt7615_dev *dev,
@@ -1509,10 +1507,8 @@ int mt7615_mcu_set_ht_cap(struct mt7615_dev *dev, struct ieee80211_vif *vif,
 		sta_vht->tag = cpu_to_le16(STA_REC_VHT);
 		sta_vht->len = cpu_to_le16(sizeof(*sta_vht));
 		sta_vht->vht_cap = cpu_to_le32(sta->vht_cap.cap);
-		sta_vht->vht_rx_mcs_map =
-			cpu_to_le16(sta->vht_cap.vht_mcs.rx_mcs_map);
-		sta_vht->vht_tx_mcs_map =
-			cpu_to_le16(sta->vht_cap.vht_mcs.tx_mcs_map);
+		sta_vht->vht_rx_mcs_map = sta->vht_cap.vht_mcs.rx_mcs_map;
+		sta_vht->vht_tx_mcs_map = sta->vht_cap.vht_mcs.tx_mcs_map;
 	}
 
 	ret = __mt76_mcu_send_msg(&dev->mt76, MCU_EXT_CMD_STA_REC_UPDATE,
@@ -1651,92 +1647,4 @@ int mt7615_mcu_set_rx_ba(struct mt7615_dev *dev,
 				   &wtbl_req, sizeof(wtbl_req), true);
 }
 
-void mt7615_mcu_set_rates(struct mt7615_dev *dev, struct mt7615_sta *sta,
-			  struct ieee80211_tx_rate *probe_rate,
-			  struct ieee80211_tx_rate *rates)
-{
-	int wcid = sta->wcid.idx;
-	u32 addr = MT_WTBL_BASE + wcid * MT_WTBL_ENTRY_SIZE;
-	bool stbc = false;
-	int n_rates = sta->n_rates;
-	u8 bw, bw_prev, bw_idx = 0;
-	u16 val[4];
-	u16 probe_val;
-	u32 w5, w27;
-	int i;
 
-	if (!mt76_poll(dev, MT_WTBL_UPDATE, MT_WTBL_UPDATE_BUSY, 0, 5000))
-		return;
-
-	for (i = n_rates; i < 4; i++)
-		rates[i] = rates[n_rates - 1];
-
-	val[0] = mt7615_mac_tx_rate_val(dev, &rates[0], stbc, &bw);
-	bw_prev = bw;
-
-	if (probe_rate) {
-		probe_val = mt7615_mac_tx_rate_val(dev, probe_rate, stbc, &bw);
-		if (bw)
-			bw_idx = 1;
-		else
-			bw_prev = 0;
-	} else {
-		probe_val = val[0];
-	}
-
-	val[1] = mt7615_mac_tx_rate_val(dev, &rates[1], stbc, &bw);
-	if (bw_prev) {
-		bw_idx = 3;
-		bw_prev = bw;
-	}
-
-	val[2] = mt7615_mac_tx_rate_val(dev, &rates[2], stbc, &bw);
-	if (bw_prev) {
-		bw_idx = 5;
-		bw_prev = bw;
-	}
-
-	val[3] = mt7615_mac_tx_rate_val(dev, &rates[3], stbc, &bw);
-	if (bw_prev)
-		bw_idx = 7;
-
-	w27 = mt76_rr(dev, addr + 27 * 4);
-	w27 &= ~MT_WTBL_W27_CC_BW_SEL;
-	w27 |= FIELD_PREP(MT_WTBL_W27_CC_BW_SEL, bw);
-
-	w5 = mt76_rr(dev, addr + 5 * 4);
-	w5 &= ~(MT_WTBL_W5_BW_CAP | MT_WTBL_W5_CHANGE_BW_RATE);
-	w5 |= FIELD_PREP(MT_WTBL_W5_BW_CAP, bw) |
-	      FIELD_PREP(MT_WTBL_W5_CHANGE_BW_RATE, bw_idx ? bw_idx - 1 : 7);
-
-	mt76_wr(dev, MT_WTBL_RIUCR0, w5);
-
-	mt76_wr(dev, MT_WTBL_RIUCR1,
-		FIELD_PREP(MT_WTBL_RIUCR1_RATE0, probe_val) |
-		FIELD_PREP(MT_WTBL_RIUCR1_RATE1, val[0]) |
-		FIELD_PREP(MT_WTBL_RIUCR1_RATE2_LO, val[0]));
-
-	mt76_wr(dev, MT_WTBL_RIUCR2,
-		FIELD_PREP(MT_WTBL_RIUCR2_RATE2_HI, val[0] >> 8) |
-		FIELD_PREP(MT_WTBL_RIUCR2_RATE3, val[1]) |
-		FIELD_PREP(MT_WTBL_RIUCR2_RATE4, val[1]) |
-		FIELD_PREP(MT_WTBL_RIUCR2_RATE5_LO, val[2]));
-
-	mt76_wr(dev, MT_WTBL_RIUCR3,
-		FIELD_PREP(MT_WTBL_RIUCR3_RATE5_HI, val[2] >> 4) |
-		FIELD_PREP(MT_WTBL_RIUCR3_RATE6, val[2]) |
-		FIELD_PREP(MT_WTBL_RIUCR3_RATE7, val[3]));
-
-	mt76_wr(dev, MT_WTBL_UPDATE,
-		FIELD_PREP(MT_WTBL_UPDATE_WLAN_IDX, wcid) |
-		MT_WTBL_UPDATE_RATE_UPDATE |
-		MT_WTBL_UPDATE_TX_COUNT_CLEAR);
-
-	mt76_wr(dev, addr + 27 * 4, w27);
-
-	if (!(sta->wcid.tx_info & MT_WCID_TX_INFO_SET))
-		mt76_poll(dev, MT_WTBL_UPDATE, MT_WTBL_UPDATE_BUSY, 0, 5000);
-
-	sta->rate_count = 2 * MT7615_RATE_RETRY * n_rates;
-	sta->wcid.tx_info |= MT_WCID_TX_INFO_SET;
-}
